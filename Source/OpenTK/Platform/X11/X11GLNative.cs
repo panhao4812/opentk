@@ -115,6 +115,7 @@ namespace OpenTK.Platform.X11
         bool _decorations_hidden = false;
 
         MouseCursor cursor = MouseCursor.Default;
+        IntPtr cursorHandle;
         bool cursor_visible = true;
         int mouse_rel_x, mouse_rel_y;
 
@@ -1454,7 +1455,30 @@ namespace OpenTK.Platform.X11
             }
             set
             {
-                Debug.Print("[Warning] X11GLNative.Cursor property not implemented");
+                unsafe
+                {
+                    using (new XLock(window.Display))
+                    {
+                      if (value == MouseCursor.Default)
+                      {
+                        Functions.XUndefineCursor(window.Display, window.Handle);
+                      }
+                      else
+                      {
+                        fixed(byte* pixels = value.Rgba)
+                        {
+                            var xcursorimage = Functions.XcursorImageCreate(32, 32);
+                            xcursorimage->xhot = (uint)value.X;
+                            xcursorimage->yhot = (uint)value.Y;
+                            xcursorimage->pixels = (uint*)pixels;
+                            xcursorimage->delay = 0;
+                            cursorHandle = Functions.XcursorImageLoadCursor(window.Display, xcursorimage);
+                            Functions.XDefineCursor(window.Display, window.Handle, cursorHandle);
+                            Functions.XcursorImageDestroy(xcursorimage);
+                        }
+                      }
+                    }
+                }
             }
         }
 
@@ -1471,7 +1495,7 @@ namespace OpenTK.Platform.X11
                 {
                     using (new XLock(window.Display))
                     {
-                        Functions.XUndefineCursor(window.Display, window.Handle);
+                        Functions.XDefineCursor(window.Display, window.Handle, cursorHandle);
                         cursor_visible = true;
                     }
                 }
@@ -1708,6 +1732,10 @@ namespace OpenTK.Platform.X11
                         {
                             using (new XLock(window.Display))
                             {
+                                if(cursorHandle != IntPtr.Zero)
+                                {
+                                    Functions.XFreeCursor(window.Display, cursorHandle);
+                                }
                                 Functions.XFreeCursor(window.Display, EmptyCursor);
                                 Functions.XDestroyWindow(window.Display, window.Handle);
                             }

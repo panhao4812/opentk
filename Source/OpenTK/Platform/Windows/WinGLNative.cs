@@ -103,6 +103,7 @@ namespace OpenTK.Platform.Windows
         KeyPressEventArgs key_press = new KeyPressEventArgs((char)0);
 
         MouseCursor cursor = MouseCursor.Default;
+        IntPtr curson_handle = IntPtr.Zero;
         int cursor_visible_count = 0;
 
         static readonly object SyncRoot = new object();
@@ -388,6 +389,17 @@ namespace OpenTK.Platform.Windows
             }
         }
 
+        private IntPtr? HandleSetCursor(IntPtr handle, WindowMessage message, IntPtr wParam, IntPtr lParam)
+        {
+            if (cursor != MouseCursor.Default)
+            {
+                Functions.SetCursor(curson_handle);
+                return new IntPtr(1);
+            }
+
+            return null;
+        }
+
         void HandleChar(IntPtr handle, WindowMessage message, IntPtr wParam, IntPtr lParam)
         {
             char c;
@@ -577,6 +589,8 @@ namespace OpenTK.Platform.Windows
 
         IntPtr WindowProcedure(IntPtr handle, WindowMessage message, IntPtr wParam, IntPtr lParam)
         {
+            IntPtr? result = null;
+
             switch (message)
             {
                 #region Size / Move / Style events
@@ -608,6 +622,10 @@ namespace OpenTK.Platform.Windows
 
                 case WindowMessage.SIZE:
                     HandleSize(handle, message, wParam, lParam);
+                    break;
+
+                case WindowMessage.SETCURSOR:
+                    result = HandleSetCursor(handle, message, wParam, lParam);
                     break;
 
                 #endregion
@@ -696,7 +714,14 @@ namespace OpenTK.Platform.Windows
                 #endregion
             }
 
-            return Functions.DefWindowProc(handle, message, wParam, lParam);
+            if (result.HasValue)
+            {
+                return result.Value;
+            }
+            else
+            {
+                return Functions.DefWindowProc(handle, message, wParam, lParam);
+            }
         }
 
         private void EnableMouseTracking()
@@ -1099,7 +1124,51 @@ namespace OpenTK.Platform.Windows
             }
             set
             {
-                Debug.Print("[Warning] WinGLNative.Cursor property not implemented");
+                if (value != cursor)
+                {
+                    var stride = value.Width *
+                        (Bitmap.GetPixelFormatSize(System.Drawing.Imaging.PixelFormat.Format32bppArgb) / 8);
+
+                    Bitmap bmp;
+                    unsafe
+                    {
+                        fixed (byte* pixels = value.Rgba)
+                        {
+                            bmp = new Bitmap(value.Width, value.Height, stride, 
+                                System.Drawing.Imaging.PixelFormat.Format32bppArgb,
+                                new IntPtr(pixels));
+                        }
+                    }
+
+                    var iconInfo = new IconInfo();
+                    var bmpIcon = bmp.GetHicon();
+                    var success = Functions.GetIconInfo(bmpIcon, out iconInfo);
+
+                    if (success)
+                    {
+                        iconInfo.xHotspot = value.X;
+                        iconInfo.yHotspot = value.Y;
+                        iconInfo.fIcon = false;
+
+                        var icon = Functions.CreateIconIndirect(ref iconInfo);
+
+                        if (icon != IntPtr.Zero)
+                        {
+                            // Currently using a custom cursor so destroy it 
+                            // once replaced
+                            bool destoryOld = cursor != MouseCursor.Default;
+
+                            cursor = value;
+                            curson_handle = icon;
+                            var oldCursor = Functions.SetCursor(icon);
+
+                            if (destoryOld)
+                            {
+                                Functions.DestroyIcon(oldCursor);
+                            }
+                        }
+                    }
+                }
             }
         }
 
