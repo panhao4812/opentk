@@ -53,8 +53,6 @@ namespace OpenTK.Platform.MacOS
         CarbonWindowInfo window;
         CarbonInput mInputDriver;
 
-        static MacOSKeyMap Keymap = new MacOSKeyMap();
-
         IntPtr uppHandler;
 
         string title = "OpenTK Window";
@@ -594,8 +592,7 @@ namespace OpenTK.Platform.MacOS
 
         void ProcessKeyDown(MacOSKeyCode code)
         {
-            Key key;
-            Keymap.TryGetValue(code, out key);
+            Key key = MacOSKeyMap.GetKey(code);
 
             // Legacy keyboard API
             KeyboardDevice keyboard = InputDriver.Keyboard[0];
@@ -616,8 +613,7 @@ namespace OpenTK.Platform.MacOS
 
         void ProcessKeyUp(MacOSKeyCode code)
         {
-            Key key;
-            Keymap.TryGetValue(code, out key);
+            Key key = MacOSKeyMap.GetKey(code);
 
             // Legacy keyboard API
             KeyboardDevice keyboard = InputDriver.Keyboard[0];
