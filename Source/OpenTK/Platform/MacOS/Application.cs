@@ -31,6 +31,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace OpenTK.Platform.MacOS.Carbon
@@ -105,12 +106,12 @@ namespace OpenTK.Platform.MacOS.Carbon
             	new EventTypeSpec(EventClass.Keyboard, KeyboardEventKind.RawKeyModifiersChanged), 
             	new EventTypeSpec(EventClass.AppleEvent, AppleEventKind.AppleEvent), 
             };
-            
+
             MacOSEventHandler handler = EventHandler;
-            uppHandler = API.NewEventHandlerUPP(handler);
-            
+            uppHandler = Marshal.GetFunctionPointerForDelegate(handler);
+
             API.InstallApplicationEventHandler(uppHandler, eventTypes, IntPtr.Zero, IntPtr.Zero);
-            
+
             mInitialized = true;
         }
 
