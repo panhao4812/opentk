@@ -1,11 +1,32 @@
-#region --- License ---
-/* Copyright (c) 2006, 2007 Stefanos Apostolopoulos
- * Contributions from Erik Ylvisaker
- * See license.txt for license info
- */
+#region License
+//
+// WinRawJoystick.cs
+//
+// Author:
+//       Stefanos A. <stapostol@gmail.com>
+//
+// Copyright (c) 2006 Stefanos Apostolopoulos
+// Copyright (c) 2007 Erik Ylvisaker
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
 #endregion
-
-#region --- Using Directives ---
 
 using System;
 #if !MINIMAL
@@ -14,8 +35,7 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Security;
-
-#endregion
+using OpenTK.Platform.Common;
 
 /* TODO: Update the description of TimeBeginPeriod and other native methods. Update Timer. */
 
@@ -74,6 +94,7 @@ namespace OpenTK.Platform.Windows
     using TIMERPROC = Functions.TimerProc;
 
     using REGSAM = System.UInt32;
+    using System.Diagnostics;
 
     #endregion
 
@@ -856,6 +877,98 @@ namespace OpenTK.Platform.Windows
 
         #endregion
 
+        #region CreateIconIndirect
+
+        /// <summary>
+        /// Creates an icon or cursor from an IconInfo structure.
+        /// </summary>
+        /// <param name="iconInfo">
+        /// A pointer to an IconInfo structure the function uses to create the 
+        /// icon or cursor.
+        /// </param>
+        /// <returns>
+        /// If the function succeeds, the return value is a handle to the icon
+        /// or cursor that is created.
+        /// 
+        /// If the function fails, the return value is null. To get extended 
+        /// error information, call Marshal.GetLastWin32Error.
+        /// </returns>
+        /// <remarks>
+        /// The system copies the bitmaps in the IconInfo structure before 
+        /// creating the icon or cursor. Because the system may temporarily 
+        /// select the bitmaps in a device context, the hbmMask and hbmColor 
+        /// members of the IconInfo structure should not already be selected 
+        /// into a device context. The application must continue to manage the 
+        /// original bitmaps and delete them when they are no longer necessary.
+        /// When you are finished using the icon, destroy it using the 
+        /// DestroyIcon function.
+        /// </remarks>
+        [DllImport("user32.dll", SetLastError=true)]
+        public static extern HICON CreateIconIndirect(ref IconInfo iconInfo);
+
+        #endregion
+
+        #region GetIconInfo
+
+        /// <summary>
+        /// Retrieves information about the specified icon or cursor.
+        /// </summary>
+        /// <param name="hIcon">A handle to the icon or cursor.</param>
+        /// <param name="pIconInfo">
+        /// A pointer to an IconInfo structure. The function fills in the 
+        /// structure's members.
+        /// </param>
+        /// <returns>
+        /// If the function succeeds, the return value is nonzero and the 
+        /// function fills in the members of the specified IconInfo structure.
+        /// 
+        /// If the function fails, the return value is zero. To get extended 
+        /// error information, call Marshal.GetLastWin32Error.
+        /// </returns>
+        /// <remarks>
+        /// GetIconInfo creates bitmaps for the hbmMask and hbmColor members 
+        /// of IconInfo. The calling application must manage these bitmaps and
+        /// delete them when they are no longer necessary.
+        /// </remarks>
+        [DllImport("user32.dll", SetLastError=true)]
+        public static extern BOOL GetIconInfo(HICON hIcon, out IconInfo pIconInfo);
+
+        #endregion
+
+        #region DestroyIcon
+
+        /// <summary>
+        /// Destroys an icon and frees any memory the icon occupied.
+        /// </summary>
+        /// <param name="hIcon">
+        /// A handle to the icon to be destroyed. The icon must not be in use.
+        /// </param>
+        /// <returns>
+        /// If the function succeeds, the return value is nonzero.
+        /// 
+        /// If the function fails, the return value is zero. To get extended 
+        /// error information, call Marshal.GetLastWin32Error.
+        /// </returns>
+        /// <remarks>
+        /// It is only necessary to call DestroyIcon for icons and cursors 
+        /// created with the following functions: CreateIconFromResourceEx 
+        /// (if called without the LR_SHARED flag), CreateIconIndirect, and 
+        /// CopyIcon. Do not use this function to destroy a shared icon. A 
+        /// shared icon is valid as long as the module from which it was loaded
+        /// remains in memory. The following functions obtain a shared icon.
+        /// 
+        /// LoadIcon
+        /// LoadImage (if you use the LR_SHARED flag)
+        /// CopyImage (if you use the LR_COPYRETURNORG flag and the hImage parameter is a shared icon)
+        /// CreateIconFromResource
+        /// CreateIconFromResourceEx (if you use the LR_SHARED flag)
+        /// </remarks>
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern BOOL DestroyIcon(HICON hIcon);
+
+        #endregion
+
+
         [DllImport("user32.dll", SetLastError = true)]
         public static extern BOOL SetForegroundWindow(HWND hWnd);
 
@@ -1042,6 +1155,53 @@ namespace OpenTK.Platform.Windows
         unsafe internal static extern int GetMouseMovePointsEx(
             uint cbSize, MouseMovePoint* pointsIn, 
             MouseMovePoint* pointsBufferOut, int nBufPoints, uint resolution);
+
+        /// <summary>
+        /// Sets the cursor shape.
+        /// </summary>
+        /// <param name="hCursor">
+        /// A handle to the cursor. The cursor must have been created by the 
+        /// CreateCursor function or loaded by the LoadCursor or LoadImage 
+        /// function. If this parameter is IntPtr.Zero, the cursor is removed 
+        /// from the screen.
+        /// </param>
+        /// <returns>
+        /// The return value is the handle to the previous cursor, if there was one.
+        /// 
+        /// If there was no previous cursor, the return value is null.
+        /// </returns>
+        /// <remarks>
+        /// The cursor is set only if the new cursor is different from the 
+        /// previous cursor; otherwise, the function returns immediately.
+        /// 
+        /// The cursor is a shared resource. A window should set the cursor 
+        /// shape only when the cursor is in its client area or when the window 
+        /// is capturing mouse input. In systems without a mouse, the window 
+        /// should restore the previous cursor before the cursor leaves the 
+        /// client area or before it relinquishes control to another window.
+        /// 
+        /// If your application must set the cursor while it is in a window, 
+        /// make sure the class cursor for the specified window's class is set 
+        /// to NULL. If the class cursor is not NULL, the system restores the 
+        /// class cursor each time the mouse is moved.
+        /// 
+        /// The cursor is not shown on the screen if the internal cursor 
+        /// display count is less than zero. This occurs if the application 
+        /// uses the ShowCursor function to hide the cursor more times than to 
+        /// show the cursor.
+        /// </remarks>
+        [DllImport("user32.dll")]
+        public static extern HCURSOR SetCursor(HCURSOR hCursor);
+
+        /// <summary>
+        /// Retrieves a handle to the current cursor.
+        /// </summary>
+        /// <returns>
+        /// The return value is the handle to the current cursor. If there is 
+        /// no cursor, the return value is null.
+        /// </returns>
+        [DllImport("user32.dll")]
+        public static extern HCURSOR GetCursor();
 
         #region Async input
 
@@ -1341,22 +1501,22 @@ namespace OpenTK.Platform.Windows
         /// <para>If Data is not large enough for the data, the function returns -1. If Data is NULL, the function returns a value of zero. In both of these cases, Size is set to the minimum size required for the Data buffer.</para>
         /// <para>Call GetLastError to identify any other errors.</para>
         /// </returns>
-        [CLSCompliant(false)]
-        [System.Security.SuppressUnmanagedCodeSecurity]
-        [DllImport("user32.dll", SetLastError = true)]
-        internal static extern UINT GetRawInputDeviceInfo(
-            HANDLE Device,
-            [MarshalAs(UnmanagedType.U4)] RawInputDeviceInfoEnum Command,
-            [In, Out] LPVOID Data,
-            [In, Out] ref UINT Size
-        );
-
         [System.Security.SuppressUnmanagedCodeSecurity]
         [DllImport("user32.dll", SetLastError = true)]
         internal static extern INT GetRawInputDeviceInfo(
             HANDLE Device,
             [MarshalAs(UnmanagedType.U4)] RawInputDeviceInfoEnum Command,
             [In, Out] LPVOID Data,
+            [In, Out] ref INT Size
+        );
+
+        [CLSCompliant(false)]
+        [System.Security.SuppressUnmanagedCodeSecurity]
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern INT GetRawInputDeviceInfo(
+            HANDLE Device,
+            [MarshalAs(UnmanagedType.U4)] RawInputDeviceInfoEnum Command,
+            [In, Out] byte[] Data,
             [In, Out] ref INT Size
         );
 
@@ -1486,6 +1646,52 @@ namespace OpenTK.Platform.Windows
             [In, Out] ref INT Size,
             INT SizeHeader
         );
+
+        internal static int GetRawInputData(IntPtr raw, out RawInputHeader header)
+        {
+            int size = RawInputHeader.SizeInBytes;
+            unsafe
+            {
+                fixed (RawInputHeader* pheader = &header)
+                {
+                    if (GetRawInputData(raw, GetRawInputDataEnum.HEADER,
+                        (IntPtr)pheader, ref size, API.RawInputHeaderSize) != RawInputHeader.SizeInBytes)
+                    {
+                        Debug.Print("[Error] Failed to retrieve raw input header. Error: {0}",
+                            Marshal.GetLastWin32Error());
+                    }
+                }
+            }
+            return size;
+        }
+
+        internal static int GetRawInputData(IntPtr raw, out RawInput data)
+        {
+            int size = RawInput.SizeInBytes;
+            unsafe
+            {
+                fixed (RawInput* pdata = &data)
+                {
+                    GetRawInputData(raw, GetRawInputDataEnum.INPUT,
+                        (IntPtr)pdata, ref size, API.RawInputHeaderSize);
+                }
+            }
+            return size;
+        }
+
+        internal static int GetRawInputData(IntPtr raw, byte[] data)
+        {
+            int size = data.Length;
+            unsafe
+            {
+                fixed (byte* pdata = data)
+                {
+                    GetRawInputData(raw, GetRawInputDataEnum.INPUT,
+                        (IntPtr)pdata, ref size, API.RawInputHeaderSize);
+                }
+            }
+            return size;
+        }
 
         #endregion
 
@@ -2285,8 +2491,7 @@ namespace OpenTK.Platform.Windows
         /// <summary>
         /// Top level collection Usage page for the raw input device.
         /// </summary>
-        //internal USHORT UsagePage;
-        internal SHORT UsagePage;
+        internal HIDPage UsagePage;
         /// <summary>
         /// Top level collection Usage for the raw input device.
         /// </summary>
@@ -2303,6 +2508,22 @@ namespace OpenTK.Platform.Windows
         /// Handle to the target window. If NULL it follows the keyboard focus.
         /// </summary>
         internal HWND Target;
+
+        public RawInputDevice(HIDUsageGD usage, RawInputDeviceFlags flags, HWND target)
+        {
+            UsagePage = HIDPage.GenericDesktop;
+            Usage = (short)usage;
+            Flags = flags;
+            Target = target;
+        }
+
+        public RawInputDevice(HIDUsageSim usage, RawInputDeviceFlags flags, HWND target)
+        {
+            UsagePage = HIDPage.Simulation;
+            Usage = (short)usage;
+            Flags = flags;
+            Target = target;
+        }
 
         public override string ToString()
         {
@@ -2355,6 +2576,9 @@ namespace OpenTK.Platform.Windows
     {
         public RawInputHeader Header;
         public RawInputData Data;
+
+        public static readonly int SizeInBytes =
+            BlittableValueType<RawInput>.Stride;
     }
 
     [StructLayout(LayoutKind.Explicit)]
@@ -2366,6 +2590,9 @@ namespace OpenTK.Platform.Windows
         internal RawKeyboard Keyboard;
         [FieldOffset(0)]
         internal RawHID HID;
+
+        public static readonly int SizeInBytes =
+            BlittableValueType<RawInputData>.Stride;
     }
 
     #endregion
@@ -2398,6 +2625,9 @@ namespace OpenTK.Platform.Windows
         /// Value passed in the wParam parameter of the WM_INPUT message.
         /// </summary>
         internal WPARAM Param;
+
+        public static readonly int SizeInBytes =
+            BlittableValueType<RawInputHeader>.Stride;
     }
 
     #endregion
@@ -2576,16 +2806,31 @@ namespace OpenTK.Platform.Windows
         /// <summary>
         /// Size, in bytes, of each HID input in bRawData.
         /// </summary>
-        internal DWORD SizeHid;
+        internal DWORD Size;
         /// <summary>
         /// Number of HID inputs in bRawData.
         /// </summary>
         internal DWORD Count;
-        // The RawData field must be marshalled manually.
-        ///// <summary>
-        ///// Raw input data as an array of bytes.
-        ///// </summary>
-        //internal IntPtr RawData;
+        /// <summary>
+        /// Raw input data as an array of bytes.
+        /// </summary>
+        internal byte RawData;
+
+        internal byte this[int index]
+        {
+            get
+            {
+                if (index < 0 || index > Size * Count)
+                    throw new ArgumentOutOfRangeException("index");
+                unsafe
+                {
+                    fixed (byte* data = &RawData)
+                    {
+                        return *(data + index);
+                    }
+                }
+            }
+        }
     }
 
     #endregion
@@ -2602,7 +2847,7 @@ namespace OpenTK.Platform.Windows
         /// <summary>
         /// Size, in bytes, of the RawInputDeviceInfo structure.
         /// </summary>
-        DWORD Size = Marshal.SizeOf(typeof(RawInputDeviceInfo)); 
+        internal DWORD Size = Marshal.SizeOf(typeof(RawInputDeviceInfo)); 
         /// <summary>
         /// Type of raw input data.
         /// </summary>
@@ -3002,7 +3247,61 @@ namespace OpenTK.Platform.Windows
         /// </summary>
         public IntPtr ExtraInfo;
 
+        /// <summary>
+        /// Returns the size of a MouseMovePoint in bytes.
+        /// </summary>
         public static readonly int SizeInBytes = Marshal.SizeOf(default(MouseMovePoint));
+    }
+
+    #endregion
+
+    #region IconInfo
+
+    /// \internal
+    /// <summary>
+    /// Contains information about an icon or a cursor.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    struct IconInfo
+    {
+        /// <summary>
+        /// Specifies whether this structure defines an icon or a cursor. A 
+        /// value of TRUE specifies an icon; FALSE specifies a cursor
+        /// </summary>
+        public bool fIcon;
+
+        /// <summary>
+        /// The x-coordinate of a cursor's hot spot. If this structure defines 
+        /// an icon, the hot spot is always in the center of the icon, and 
+        /// this member is ignored.
+        /// </summary>
+        public Int32 xHotspot;
+
+        /// <summary>
+        /// The y-coordinate of a cursor's hot spot. If this structure defines 
+        /// an icon, the hot spot is always in the center of the icon, and 
+        /// this member is ignored.
+        /// </summary>
+        public Int32 yHotspot;
+
+        /// <summary>
+        /// The icon bitmask bitmap. If this structure defines a black and 
+        /// white icon, this bitmask is formatted so that the upper half is 
+        /// the icon AND bitmask and the lower half is the icon XOR bitmask. 
+        /// Under this condition, the height should be an even multiple of 
+        /// two. If this structure defines a color icon, this mask only 
+        /// defines the AND bitmask of the icon.
+        /// </summary>
+        public IntPtr hbmMask;
+
+        /// <summary>
+        /// A handle to the icon color bitmap. This member can be optional if
+        /// this structure defines a black and white icon. The AND bitmask of
+        /// hbmMask is applied with the SRCAND flag to the destination; 
+        /// subsequently, the color bitmap is applied (using XOR) to the 
+        /// destination by using the SRCINVERT flag.
+        /// </summary>
+        public IntPtr hbmColor;
     }
 
     #endregion
@@ -3401,7 +3700,8 @@ namespace OpenTK.Platform.Windows
         BUTTON_5_DOWN    = 0x0100,
         BUTTON_5_UP      = 0x0200,
 
-        WHEEL            = 0x0400
+        WHEEL            = 0x0400,
+        HWHEEL            = 0x0800,
     }
 
     #endregion
@@ -4007,7 +4307,6 @@ namespace OpenTK.Platform.Windows
         MBUTTONUP = 0x0208,
         MBUTTONDBLCLK = 0x0209,
         MOUSEWHEEL = 0x020A,
-        MOUSELAST = 0x020D,
         /// <summary>
         /// Windows 2000 and higher only.
         /// </summary>
@@ -4020,6 +4319,10 @@ namespace OpenTK.Platform.Windows
         /// Windows 2000 and higher only.
         /// </summary>
         XBUTTONDBLCLK    = 0x020D,
+        /// <summary>
+        /// Windows Vista and higher only.
+        /// </summary>
+        MOUSEHWHEEL = 0x020E,
         PARENTNOTIFY = 0x0210,
         ENTERMENULOOP = 0x0211,
         EXITMENULOOP = 0x0212,

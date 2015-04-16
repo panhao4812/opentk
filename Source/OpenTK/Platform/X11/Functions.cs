@@ -71,10 +71,8 @@ namespace OpenTK.Platform.X11
         [DllImport("libX11", EntryPoint = "XSynchronize")]
         public extern static IntPtr XSynchronize(IntPtr display, bool onoff);
 
-        //[DllImport("libX11", EntryPoint = "XCreateWindow"), CLSCompliant(false)]
-        //public extern static IntPtr XCreateWindow(IntPtr display, IntPtr parent, int x, int y, int width, int height, int border_width, int depth, int xclass, IntPtr visual, UIntPtr valuemask, ref XSetWindowAttributes attributes);
         [DllImport("libX11", EntryPoint = "XCreateWindow")]
-        public extern static IntPtr XCreateWindow(IntPtr display, IntPtr parent, int x, int y, int width, int height, int border_width, int depth, int xclass, IntPtr visual, IntPtr valuemask, ref XSetWindowAttributes attributes);
+        public unsafe extern static IntPtr XCreateWindow(IntPtr display, IntPtr parent, int x, int y, int width, int height, int border_width, int depth, int xclass, IntPtr visual, IntPtr valuemask, XSetWindowAttributes* attributes);
 
         [DllImport("libX11", EntryPoint = "XCreateSimpleWindow")]//, CLSCompliant(false)]
         public extern static IntPtr XCreateSimpleWindow(IntPtr display, IntPtr parent, int x, int y, int width, int height, int border_width, UIntPtr border, UIntPtr background);
@@ -103,7 +101,8 @@ namespace OpenTK.Platform.X11
         [DllImport("libX11")]
         public extern static Bool XCheckTypedEvent(Display display, XEventName event_type, out XEvent event_return);
 
-
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.Bool)]
         public delegate Bool EventPredicate(IntPtr display, ref XEvent e, IntPtr arg);
         [DllImport("libX11")]
         public extern static Bool XIfEvent(Display display, ref XEvent e, IntPtr predicate, IntPtr arg );
@@ -176,6 +175,9 @@ namespace OpenTK.Platform.X11
 
         [DllImport("libX11", EntryPoint = "XInternAtoms")]
         public extern static int XInternAtoms(IntPtr display, string[] atom_names, int atom_count, bool only_if_exists, IntPtr[] atoms);
+
+        [DllImport("libX11", EntryPoint = "XGetAtomName")]
+        public extern static IntPtr XGetAtomName(IntPtr display, IntPtr atom);
 
         [DllImport("libX11", EntryPoint = "XSetWMProtocols")]
         public extern static int XSetWMProtocols(IntPtr display, IntPtr window, IntPtr[] protocols, int count);
@@ -440,9 +442,6 @@ namespace OpenTK.Platform.X11
         public extern static bool XFilterEvent(ref XEvent xevent, IntPtr window);
 
         [DllImport("libX11")]
-        public extern static bool XkbSetDetectableAutoRepeat(IntPtr display, bool detectable, out bool supported);
-
-        [DllImport("libX11")]
         public extern static void XPeekEvent(IntPtr display, ref XEvent xevent);
 
         [DllImport("libX11", EntryPoint = "XGetVisualInfo")]
@@ -513,33 +512,8 @@ namespace OpenTK.Platform.X11
         [DllImport("libX11")]
         public static extern void XFreeEventData(IntPtr display, ref XGenericEventCookie cookie);
 
-        [DllImport("libXi")]
-        static extern int XISelectEvents(IntPtr dpy, Window win, [In] XIEventMask[] masks, int num_masks);
-        [DllImport("libXi")]
-        static extern int XISelectEvents(IntPtr dpy, Window win, [In] ref XIEventMask masks, int num_masks);
-
-        public static int XISelectEvents(IntPtr dpy, Window win, XIEventMask[] masks)
-        {
-            return XISelectEvents(dpy, win, masks, masks.Length);
-        }
-
-        public static int XISelectEvents(IntPtr dpy, Window win, XIEventMask mask)
-        {
-            return XISelectEvents(dpy, win, ref mask, 1);
-        }
-
-        [DllImport("libXi")]
-        static extern Status XIGrabDevice(IntPtr display, int deviceid, Window grab_window, Time time,
-            Cursor cursor, int grab_mode, int paired_device_mode, Bool owner_events, XIEventMask[] mask);
-
-        [DllImport("libXi")]
-        static extern Status XIUngrabDevice(IntPtr display, int deviceid, Time time);
-
-        [DllImport("libXi")]
-        public static extern Bool XIWarpPointer(Display display,
-            int deviceid, Window src_w, Window dest_w,
-            double src_x, double src_y, int src_width, int src_height,
-            double dest_x, double dest_y);
+        [DllImport("libX11")]
+        public static extern void XSetClassHint(IntPtr display, IntPtr window, ref XClassHint hint);
 
         static readonly IntPtr CopyFromParent = IntPtr.Zero;
 
@@ -604,7 +578,6 @@ namespace OpenTK.Platform.X11
         { 
             int width = image.Width;
             int height = image.Height;
-            int size = width * height; 
 
             BitmapData data = image.LockBits(new Rectangle(0, 0, width, height),
                 ImageLockMode.ReadOnly,
@@ -620,7 +593,7 @@ namespace OpenTK.Platform.X11
             
             XFreeGC(display, gc);
             image.UnlockBits(data);
-                                         
+
             return pixmap; 
         } 
         

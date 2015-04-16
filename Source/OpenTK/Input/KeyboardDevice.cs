@@ -21,13 +21,11 @@ namespace OpenTK.Input
     public sealed class KeyboardDevice : IInputDevice
     {
         //private IKeyboard keyboard;
-        private bool[] keys = new bool[Enum.GetValues(typeof(Key)).Length];
-        private bool[] scancodes = new bool[256];
         private string description;
         private int numKeys, numFKeys, numLeds;
         private IntPtr devID;
         private bool repeat;
-        private KeyboardKeyEventArgs args = new KeyboardKeyEventArgs();
+        private KeyboardState state;
 
         #region --- Constructors ---
 
@@ -44,7 +42,7 @@ namespace OpenTK.Input
         /// <returns>True if the Key is pressed, false otherwise.</returns>
         public bool this[Key key]
         {
-            get { return keys[(int)key]; }
+            get { return state[key]; }
         }
 
         /// <summary>
@@ -52,9 +50,10 @@ namespace OpenTK.Input
         /// </summary>
         /// <param name="scancode">The scancode to check.</param>
         /// <returns>True if the scancode is pressed, false otherwise.</returns>
+        [CLSCompliant(false)]
         public bool this[uint scancode]
         {
-            get { return scancodes[scancode]; }
+            get { return scancode < (uint)Key.LastKey && state[(Key)scancode]; }
         }
 
         /// <summary>
@@ -124,7 +123,7 @@ namespace OpenTK.Input
         /// <summary>
         /// Occurs when a key is pressed.
         /// </summary>
-        public event EventHandler<KeyboardKeyEventArgs> KeyDown;
+        public event EventHandler<KeyboardKeyEventArgs> KeyDown = delegate { };
 
         #endregion
 
@@ -133,7 +132,7 @@ namespace OpenTK.Input
         /// <summary>
         /// Occurs when a key is released.
         /// </summary>
-        public event EventHandler<KeyboardKeyEventArgs> KeyUp;
+        public event EventHandler<KeyboardKeyEventArgs> KeyUp = delegate { };
 
         #endregion
 
@@ -162,6 +161,29 @@ namespace OpenTK.Input
 
         #region --- Public Methods ---
 
+        /// <summary>
+        /// Retrieves the combined <see cref="OpenTK.Input.KeyboardState"/> for all keyboard devices.
+        /// This method is equivalent to <see cref="OpenTK.Input.Keyboard.GetState()"/>.
+        /// </summary>
+        /// <returns>An <see cref="OpenTK.Input.KeyboardState"/> structure containing the combined state for all keyboard devices.</returns>
+        /// <seealso cref="OpenTK.Input.Keyboard.GetState()"/>
+        public KeyboardState GetState()
+        {
+            return Keyboard.GetState();
+        }
+
+        /// <summary>
+        /// Retrieves the <see cref="OpenTK.Input.KeyboardState"/> for the specified keyboard device.
+        /// This method is equivalent to <see cref="OpenTK.Input.Keyboard.GetState(int)"/>.
+        /// </summary>
+        /// <param name="index">The index of the keyboard device.</param>
+        /// <returns>An <see cref="OpenTK.Input.KeyboardState"/> structure containing the combined state for all keyboard devices.</returns>
+        /// <seealso cref="OpenTK.Input.Keyboard.GetState(int)"/>
+        public KeyboardState GetState(int index)
+        {
+            return Keyboard.GetState(index);
+        }
+
         /// <summary>Returns the hash code for this KeyboardDevice.</summary>
         /// <returns>A 32-bit signed integer hash code.</returns>
         public override int GetHashCode()
@@ -185,63 +207,24 @@ namespace OpenTK.Input
 
         #region --- Internal Methods ---
 
-        #region internal void ClearKeys()
-
-        internal void ClearKeys()
+        internal void HandleKeyDown(object sender, KeyboardKeyEventArgs e)
         {
-            for (int i = 0; i < keys.Length; i++)
-                keys[i] = false;
-            for (uint i = 0; i < scancodes.Length; i++)
-                scancodes[i] = false;
-        }
-
-        #endregion
-
-        internal void SetKey(Key key, uint scancode, bool state)
-        {
-            if (keys[(int)key] != state || KeyRepeat)
+            state = e.Keyboard;
+            // KeyRepeat IsRepeat KeyDown
+            // False     False    True
+            // False     True     False
+            // True      False    True
+            // True      True     True
+            if (this.KeyRepeat || !e.IsRepeat)
             {
-                // limit scancode to 8bits, otherwise the assignment
-                // below will crash randomly
-                scancode &= 0xff;
-
-                keys[(int)key] = scancodes[scancode] = state;
-
-                if (state && KeyDown != null)
-                {
-                    args.Key = key;
-                    args.ScanCode = scancode;
-                    KeyDown(this, args);
-                }
-                else if (!state && KeyUp != null)
-                {
-                    args.Key = key;
-                    args.ScanCode = scancode;
-                    KeyUp(this, args);
-                }
+                KeyDown(this, e);
             }
         }
 
-        internal KeyModifiers GetModifiers()
+        internal void HandleKeyUp(object sender, KeyboardKeyEventArgs e)
         {
-            KeyModifiers mods = 0;
-
-            if (this[Key.AltLeft] || this[Key.AltRight])
-            {
-                mods |= KeyModifiers.Alt;
-            }
-
-            if (this[Key.ControlLeft] || this[Key.ControlRight])
-            {
-                mods |= KeyModifiers.Control;
-            }
-
-            if (this[Key.ShiftLeft] || this[Key.ShiftRight])
-            {
-                mods |= KeyModifiers.Shift;
-            }
-
-            return mods;
+            state = e.Keyboard;
+            KeyUp(this, e);
         }
 
         #endregion

@@ -37,13 +37,25 @@ namespace OpenTK.Platform.MacOS
 
     class MacOSFactory : PlatformFactoryBase
     {
-        readonly IInputDriver2 InputDriver = new HIDInput();
+        // Todo: we can query the exact amount via
+        // CGEventSourceGetPixelsPerLine. This is
+        // approximately 0.1f
+        internal const float ScrollFactor = 0.1f;
+        internal static bool ExclusiveFullscreen = false;
+
+        readonly IInputDriver2 InputDriver;
+
+        public MacOSFactory()
+        {
+            NSApplication.Initialize();
+            InputDriver = new HIDInput();
+        }
 
         #region IPlatformFactory Members
 
         public override INativeWindow CreateNativeWindow(int x, int y, int width, int height, string title, GraphicsMode mode, GameWindowFlags options, DisplayDevice device)
         {
-            return new CarbonGLNative(x, y, width, height, title, mode, options, device);
+            return new CocoaNativeWindow(x, y, width, height, title, mode, options, device);
         }
 
         public override IDisplayDeviceDriver CreateDisplayDeviceDriver()
@@ -53,19 +65,19 @@ namespace OpenTK.Platform.MacOS
 
         public override IGraphicsContext CreateGLContext(GraphicsMode mode, IWindowInfo window, IGraphicsContext shareContext, bool directRendering, int major, int minor, GraphicsContextFlags flags)
         {
-            return new AglContext(mode, window, shareContext);
+            return new CocoaContext(mode, window, shareContext, major, minor);
         }
 
         public override IGraphicsContext CreateGLContext(ContextHandle handle, IWindowInfo window, IGraphicsContext shareContext, bool directRendering, int major, int minor, GraphicsContextFlags flags)
         {
-            return new AglContext(handle, window, shareContext);
+            return new CocoaContext(handle, window, shareContext, major, minor);
         }
 
         public override GraphicsContext.GetCurrentContextDelegate CreateGetCurrentGraphicsContext()
         {
             return (GraphicsContext.GetCurrentContextDelegate)delegate
             {
-                return new ContextHandle(Cgl.GetCurrentContext());
+                return new ContextHandle(CocoaContext.CurrentContext);
             };
         }
 
@@ -82,6 +94,11 @@ namespace OpenTK.Platform.MacOS
         public override IJoystickDriver2 CreateJoystickDriver()
         {
             return InputDriver.JoystickDriver;
+        }
+
+        public override OpenTK.Input.IGamePadDriver CreateGamePadDriver()
+        {
+            return new MappedGamePadDriver();
         }
         
         #endregion

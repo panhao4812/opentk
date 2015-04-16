@@ -45,7 +45,7 @@ namespace OpenTK.Platform.X11
     /// Drives GameWindow on X11.
     /// This class supports OpenTK, and is not intended for use by OpenTK programs.
     /// </summary>
-    internal sealed class X11GLNative : INativeWindow, IDisposable
+    internal sealed class X11GLNative : NativeWindowBase
     {
         // TODO: Disable screensaver.
         // TODO: What happens if we can't disable decorations through motif?
@@ -55,12 +55,8 @@ namespace OpenTK.Platform.X11
         
         const int _min_width = 30, _min_height = 30;
 
-        X11WindowInfo window = new X11WindowInfo();
-
-        // Legacy input support
-        X11Input driver;
-        KeyboardDevice keyboard;
-        MouseDevice mouse;
+        readonly X11WindowInfo window = new X11WindowInfo();
+        readonly X11KeyMap KeyMap;
 
         // Window manager hints for fullscreen windows.
         // Not used right now (the code is written, but is not 64bit-correct), but could be useful for older WMs which
@@ -79,27 +75,27 @@ namespace OpenTK.Platform.X11
         IntPtr _atom_net_wm_state_fullscreen;
         IntPtr _atom_net_wm_state_maximized_horizontal;
         IntPtr _atom_net_wm_state_maximized_vertical;
-        
+
+        #pragma warning disable 414 // assigned but never used
         IntPtr _atom_net_wm_allowed_actions;
         IntPtr _atom_net_wm_action_resize;
         IntPtr _atom_net_wm_action_maximize_horizontally;
         IntPtr _atom_net_wm_action_maximize_vertically;
+        #pragma warning restore 414
 
         IntPtr _atom_net_wm_icon;
 
         IntPtr _atom_net_frame_extents;
 
         readonly IntPtr _atom_xa_cardinal = new IntPtr(6);
-        
-        //IntPtr _atom_motif_wm_hints;
-        //IntPtr _atom_kde_wm_hints;
-        //IntPtr _atom_kde_net_wm_hints;
-        
+
         static readonly IntPtr _atom_remove = (IntPtr)0;
         static readonly IntPtr _atom_add = (IntPtr)1;
         static readonly IntPtr _atom_toggle = (IntPtr)2;
-        
+
+        #pragma warning disable 649 // never assigned, compiler bug in Mono 3.4.0
         Rectangle bounds, client_rectangle;
+        #pragma warning restore 649
         int border_left, border_right, border_top, border_bottom;
         Icon icon;
         bool has_focus;
@@ -113,26 +109,36 @@ namespace OpenTK.Platform.X11
         bool isExiting;
 
         bool _decorations_hidden = false;
+
+        // Store previous border and bounds
+        // when switching from WindowState.Normal
+        // to a different state. When switching
+        // back, reset window to these.s
+        WindowBorder _previous_window_border;
+        Size _previous_window_size;
+
+        MouseCursor cursor = MouseCursor.Default;
+        IntPtr cursorHandle;
         bool cursor_visible = true;
-        int mouse_rel_x, mouse_rel_y;
 
          // Keyboard input
         readonly byte[] ascii = new byte[16];
         readonly char[] chars = new char[16];
-        readonly KeyPressEventArgs KPEventArgs = new KeyPressEventArgs('\0');
-        readonly KeyboardKeyEventArgs KeyDownEventArgs = new KeyboardKeyEventArgs();
-        readonly KeyboardKeyEventArgs KeyUpEventArgs = new KeyboardKeyEventArgs();
 
         readonly IntPtr EmptyCursor;
 
-        public static bool MouseWarpActive = false;
+        #pragma warning disable 414 // Field assigned but never used, we do that on purpose
+        readonly bool xi2_supported;
+        readonly int xi2_opcode;
+        readonly int xi2_version;
+        #pragma warning restore 414
 
         #endregion
 
         #region Constructors
 
         public X11GLNative(int x, int y, int width, int height, string title,
-            GraphicsMode mode,GameWindowFlags options, DisplayDevice device)
+            GraphicsMode mode, GameWindowFlags options, DisplayDevice device)
             : this()
         {
             if (width <= 0)
@@ -140,23 +146,17 @@ namespace OpenTK.Platform.X11
             if (height <= 0)
                 throw new ArgumentOutOfRangeException("height", "Must be higher than zero.");
 
-            XVisualInfo info = new XVisualInfo();
-
             Debug.Indent();
-            
+
             using (new XLock(window.Display))
             {
-                if (!mode.Index.HasValue)
-                {
-                    mode = new X11GraphicsMode().SelectGraphicsMode(
-                        mode.ColorFormat, mode.Depth, mode.Stencil, mode.Samples,
-                        mode.AccumulatorFormat, mode.Buffers, mode.Stereo);
-                }
+                IntPtr visual;
+                IntPtr fbconfig;
+                window.GraphicsMode = new X11GraphicsMode()
+                    .SelectGraphicsMode(mode, out visual, out fbconfig);
 
-                info.VisualID = mode.Index.Value;
-                int dummy;
-                window.VisualInfo = (XVisualInfo)Marshal.PtrToStructure(
-                    Functions.XGetVisualInfo(window.Display, XVisualInfoMask.ID, ref info, out dummy), typeof(XVisualInfo));
+                window.Visual = visual;
+                window.FBConfig = fbconfig;
 
                 // Create a window on this display using the visual above
                 Debug.Write("Opening render window... ");
@@ -173,12 +173,13 @@ namespace OpenTK.Platform.X11
                                    EventMask.PropertyChangeMask;
                 attributes.event_mask = (IntPtr)window.EventMask;
 
-                uint mask = (uint)SetWindowValuemask.ColorMap | (uint)SetWindowValuemask.EventMask |
-                    (uint)SetWindowValuemask.BackPixel | (uint)SetWindowValuemask.BorderPixel;
+                SetWindowValuemask mask =
+                    SetWindowValuemask.ColorMap | SetWindowValuemask.EventMask |
+                    SetWindowValuemask.BackPixel | SetWindowValuemask.BorderPixel;
 
                 window.Handle = Functions.XCreateWindow(window.Display, window.RootWindow,
                     x, y, width, height, 0, window.VisualInfo.Depth/*(int)CreateWindowArgs.CopyFromParent*/,
-                    (int)CreateWindowArgs.InputOutput, window.VisualInfo.Visual, (UIntPtr)mask, ref attributes);
+                    CreateWindowArgs.InputOutput, window.VisualInfo.Visual, mask, attributes);
 
                 if (window.Handle == IntPtr.Zero)
                     throw new ApplicationException("XCreateWindow call failed (returned 0).");
@@ -187,20 +188,44 @@ namespace OpenTK.Platform.X11
                     Functions.XStoreName(window.Display, window.Handle, title);
             }
 
-            // Set the window hints
-            SetWindowMinMax(_min_width, _min_height, -1, -1);            
-            
             XSizeHints hints = new XSizeHints();
             hints.base_width = width;
             hints.base_height = height;
             hints.flags = (IntPtr)(XSizeHintsFlags.PSize | XSizeHintsFlags.PPosition);
+
+            XClassHint class_hint = new XClassHint();
+            var entry_assembly = Assembly.GetEntryAssembly();
+            // May not have an entry assembly, try to find a "matching" assembly in the AppDomain
+            if (entry_assembly == null)
+            {
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    if (AppDomain.CurrentDomain.FriendlyName.EndsWith(assembly.ManifestModule.Name))
+                    {
+                        if (entry_assembly == null || assembly.ManifestModule.Name.Length > entry_assembly.ManifestModule.Name.Length)
+                        {
+                            entry_assembly = assembly;
+                        }
+                    }
+                }
+            }
+
+            var name = entry_assembly.GetName().Name;
+            class_hint.Class = name;
+            class_hint.Name = name.ToLower();
+
             using (new XLock(window.Display))
             {
                 Functions.XSetWMNormalHints(window.Display, window.Handle, ref hints);
 
                 // Register for window destroy notification
                 Functions.XSetWMProtocols(window.Display, window.Handle, new IntPtr[] { _atom_wm_destroy }, 1);
+
+                // Set the window class hints
+                Functions.XSetClassHint(window.Display, window.Handle, ref class_hint);
             }
+
+            SetWindowMinMax(_min_width, _min_height, -1, -1);
 
             // Set the initial window size to ensure X, Y, Width, Height and the rest
             // return the correct values inside the constructor and the Load event.
@@ -211,14 +236,32 @@ namespace OpenTK.Platform.X11
             e.ConfigureEvent.height = height;
             RefreshWindowBounds(ref e);
 
-            driver = new X11Input(window);
-            keyboard = driver.Keyboard[0];
-            mouse = driver.Mouse[0];
-
             EmptyCursor = CreateEmptyCursor(window);
 
             Debug.WriteLine(String.Format("X11GLNative window created successfully (id: {0}).", Handle));
             Debug.Unindent();
+
+            using (new XLock(window.Display))
+            {
+                // Request that auto-repeat is only set on devices that support it physically.
+                // This typically means that it's turned off for keyboards (which is what we want).
+                // We prefer this method over XAutoRepeatOff/On, because the latter needs to
+                // be reset before the program exits.
+                if (Xkb.IsSupported(window.Display))
+                {
+                    bool supported;
+                    Xkb.SetDetectableAutoRepeat(window.Display, true, out supported);
+                }
+            }
+
+            // The XInput2 extension makes keyboard and mouse handling much easier.
+            // Check whether it is available.
+            xi2_supported = XI2MouseKeyboard.IsSupported(window.Display);
+            if (xi2_supported)
+            {
+                xi2_opcode = XI2MouseKeyboard.XIOpCode;
+                xi2_version = XI2MouseKeyboard.XIVersion;
+            }
 
             exists = true;
         }
@@ -244,6 +287,7 @@ namespace OpenTK.Platform.X11
                 {
                     window.Screen = Functions.XDefaultScreen(window.Display); //API.DefaultScreen;
                     window.RootWindow = Functions.XRootWindow(window.Display, window.Screen); // API.RootWindow;
+                    KeyMap = new X11KeyMap(window.Display);
                 }
 
                 Debug.Print("Display: {0}, Screen {1}, Root window: {2}", window.Display, window.Screen,
@@ -296,7 +340,7 @@ namespace OpenTK.Platform.X11
 
                 _atom_net_frame_extents =
                     Functions.XInternAtom(window.Display, "_NET_FRAME_EXTENTS", false);
-            
+
 //            string[] atom_names = new string[]
 //            {
 //                //"WM_TITLE",
@@ -368,33 +412,15 @@ namespace OpenTK.Platform.X11
         {
             get
             {
-                IntPtr actual_atom;
-                int actual_format;
-                IntPtr nitems;
-                IntPtr bytes_after;
-                IntPtr prop = IntPtr.Zero;
-                IntPtr atom;
-                //XWindowAttributes attributes;                
-
                 using (new XLock(window.Display))
                 {
-                    Functions.XGetWindowProperty(window.Display, window.Handle,
-                                                 _atom_net_wm_allowed_actions, IntPtr.Zero, new IntPtr(256), false,
-                                                 IntPtr.Zero, out actual_atom, out actual_format, out nitems,
-                                                 out bytes_after, ref prop);
-                    if ((long)nitems > 0 && prop != IntPtr.Zero)
+                    XSizeHints hints = new XSizeHints();
+                    IntPtr dummy;
+                    if (Functions.XGetWMNormalHints(window.Display, window.Handle, ref hints, out dummy) != 0)
                     {
-                        for (int i = 0; i < (long)nitems; i++)
-                        {
-                            atom = (IntPtr)Marshal.ReadIntPtr(prop, i * IntPtr.Size);
-    
-                            if (atom == _atom_net_wm_action_resize)
-                                return true;
-                        }
-                        Functions.XFree(prop);
+                        return hints.min_width != hints.max_width || hints.min_height != hints.max_height;
                     }
                 }
-                    
                 return false;
             }
         }
@@ -406,15 +432,7 @@ namespace OpenTK.Platform.X11
         bool IsWindowBorderHidden
         {
             get
-            {                
-                //IntPtr actual_atom;
-                //int actual_format;
-                //IntPtr nitems;
-                //IntPtr bytes_after;
-                IntPtr prop = IntPtr.Zero;
-                //IntPtr atom;
-                //XWindowAttributes attributes;
-
+            {
                 using (new XLock(window.Display))
                 {
                     // Test if decorations have been disabled through Motif.
@@ -650,7 +668,7 @@ namespace OpenTK.Platform.X11
                 {
                     Functions.XGetWindowProperty(window.Display, window.Handle,
                         _atom_net_frame_extents, IntPtr.Zero, new IntPtr(16), false,
-                        (IntPtr)Atom.XA_CARDINAL, out atom, out format, out nitems, out bytes_after, ref prop);
+                        (IntPtr)AtomName.XA_CARDINAL, out atom, out format, out nitems, out bytes_after, ref prop);
                 }
     
                 if ((prop != IntPtr.Zero))
@@ -720,7 +738,7 @@ namespace OpenTK.Platform.X11
             if (Location != new_location)
             {
                 bounds.Location = new_location;
-                Move(this, EventArgs.Empty);
+                OnMove(EventArgs.Empty);
             }
 
             // Note: width and height denote the internal (client) size.
@@ -731,9 +749,15 @@ namespace OpenTK.Platform.X11
             if (Bounds.Size != new_size)
             {
                 bounds.Size = new_size;
-                client_rectangle.Size = new Size(e.ConfigureEvent.width, e.ConfigureEvent.height);
 
-                Resize(this, EventArgs.Empty);
+                // X11 sets the client width/height to 0
+                // when the window is minimized. Many apps
+                // do not expect this and crash, so clamp
+                // minimum width/height to 1 instead.
+                client_rectangle.Size = new Size(
+                    Math.Max(e.ConfigureEvent.width, 1),
+                    Math.Max(e.ConfigureEvent.height, 1));
+                OnResize(EventArgs.Empty);
             }
 
             //Debug.Print("[X11] Window bounds changed: {0}", bounds);
@@ -755,25 +779,15 @@ namespace OpenTK.Platform.X11
             return cursor;
         }
 
-        static void SetMouseClamped(MouseDevice mouse, int x, int y,
-            int left, int top, int width, int height)
-        {
-            // Clamp mouse to the specified rectangle.
-            x = Math.Max(x, left);
-            x = Math.Min(x, width);
-            y = Math.Max(y, top);
-            y = Math.Min(y, height);
-            mouse.Position = new Point(x, y);
-        }
-
         #endregion
 
         #region INativeWindow Members
 
         #region ProcessEvents
 
-        public void ProcessEvents()
+        public override void ProcessEvents()
         {
+            base.ProcessEvents();
             // Process all pending events
             while (Exists && window != null)
             {
@@ -792,7 +806,7 @@ namespace OpenTK.Platform.X11
                             bool previous_visible = visible;
                             visible = true;
                             if (visible != previous_visible)
-                                VisibleChanged(this, EventArgs.Empty);
+                                OnVisibleChanged(EventArgs.Empty);
                         }
                         return;
 
@@ -801,7 +815,7 @@ namespace OpenTK.Platform.X11
                             bool previous_visible = visible;
                             visible = false;
                             if (visible != previous_visible)
-                                VisibleChanged(this, EventArgs.Empty);
+                                OnVisibleChanged(EventArgs.Empty);
                         }
                         break;
 
@@ -812,19 +826,15 @@ namespace OpenTK.Platform.X11
                     case XEventName.ClientMessage:
                         if (!isExiting && e.ClientMessageEvent.ptr1 == _atom_wm_destroy)
                         {
-                            Debug.WriteLine("Exit message received.");
+                            Debug.Print("[X11] Exit message received for window {0:X} on display {1:X}", window.Handle, window.Display);
                             CancelEventArgs ce = new CancelEventArgs();
-                            Closing(this, ce);
+                            OnClosing(ce);
 
                             if (!ce.Cancel)
                             {
                                 isExiting = true;
-                                
-                                Debug.WriteLine("Destroying window.");
-                                using (new XLock(window.Display))
-                                {
-                                    Functions.XDestroyWindow(window.Display, window.Handle);
-                                }
+                                DestroyWindow();
+                                OnClosed(EventArgs.Empty);
                                 break;
                             }
                         }
@@ -834,9 +844,6 @@ namespace OpenTK.Platform.X11
                     case XEventName.DestroyNotify:
                         Debug.WriteLine("Window destroyed");
                         exists = false;
-
-                        Closed(this, EventArgs.Empty);
-
                         return;
 
                     case XEventName.ConfigureNotify:
@@ -847,26 +854,18 @@ namespace OpenTK.Platform.X11
                     case XEventName.KeyRelease:
                         bool pressed = e.type == XEventName.KeyPress;
                         Key key;
-                        if (driver.TranslateKey(ref e.KeyEvent, out key))
+                        if (KeyMap.TranslateKey(ref e.KeyEvent, out key))
                         {
-                            // Update legacy GameWindow.Keyboard API:
-                            keyboard.SetKey(key, (uint)e.KeyEvent.keycode, pressed);
-
                             if (pressed)
                             {
                                 // Raise KeyDown event
-                                KeyDownEventArgs.Key = key;
-                                KeyDownEventArgs.ScanCode = (uint)e.KeyEvent.keycode;
-                                KeyDownEventArgs.Modifiers = keyboard.GetModifiers();
-                                KeyDown(this, KeyDownEventArgs);
+                                bool is_repeat = KeyboardState[key];
+                                OnKeyDown(key, is_repeat);
                             }
                             else
                             {
                                 // Raise KeyUp event
-                                KeyUpEventArgs.Key = key;
-                                KeyUpEventArgs.ScanCode = (uint)e.KeyEvent.keycode;
-                                KeyUpEventArgs.Modifiers = keyboard.GetModifiers();
-                                KeyUp(this, KeyUpEventArgs);
+                                OnKeyUp(key);
                             }
 
                             if (pressed)
@@ -882,8 +881,7 @@ namespace OpenTK.Platform.X11
                                 {
                                     if (!Char.IsControl(chars[i]))
                                     {
-                                        KPEventArgs.KeyChar = chars[i];
-                                        KeyPress(this, KPEventArgs);
+                                        OnKeyPress(chars[i]);
                                     }
                                 }
                             }
@@ -892,53 +890,57 @@ namespace OpenTK.Platform.X11
 
                     case XEventName.MotionNotify:
                     {
-                        // Try to detect and ignore events from XWarpPointer, below.
-                        // This heuristic will fail if the user actually moves the pointer
-                        // to the dead center of the window. Fortunately, this situation
-                        // is very very uncommon. Todo: Can this be remedied?
                         int x = e.MotionEvent.x;
-                        int y =e.MotionEvent.y;
-                        // TODO: Have offset as a stored field, only update it when the window moves
-                        // The middle point cannot be the average of the Bounds.left/right/top/bottom,
-                        // because these fields take into account window decoration (borders, etc),
-                        // which we do not want to account for.
-                        Point offset = this.PointToClient(Point.Empty);
-                        int middle_x = Width/2-offset.X;
-                        int middle_y = Height/2-offset.Y;
+                        int y = e.MotionEvent.y;
 
-                        Point screen_xy = PointToScreen(new Point(x, y));
-                        if (!CursorVisible && MouseWarpActive &&
-                            screen_xy.X == middle_x && screen_xy.Y == middle_y)
+                        if (x != MouseState.X || y != MouseState.Y)
                         {
-                            MouseWarpActive = false;
-                            mouse_rel_x = x;
-                            mouse_rel_y = y;
-                        }
-                        else if (!CursorVisible)
-                        {
-                            SetMouseClamped(mouse,
-                                mouse.X + x - mouse_rel_x,
-                                mouse.Y + y - mouse_rel_y,
-                                0, 0, Width, Height);
-                            mouse_rel_x = x;
-                            mouse_rel_y = y;
-
-                            // Warp cursor to center of window.
-                            MouseWarpActive = true;
-                            Mouse.SetPosition(middle_x, middle_y);
-                        }
-                        else
-                        {
-                            SetMouseClamped(mouse, x, y, 0, 0, Width, Height);
-                            mouse_rel_x = x;
-                            mouse_rel_y = y;
+                            OnMouseMove(
+                                MathHelper.Clamp(x, 0, Width),
+                                MathHelper.Clamp(y, 0, Height));
                         }
                         break;
                     }
 
                     case XEventName.ButtonPress:
+                        {
+                            float dx, dy;
+                            MouseButton button = X11KeyMap.TranslateButton(e.ButtonEvent.button, out dx, out dy);
+
+                            if (button != MouseButton.LastButton)
+                            {
+                                OnMouseDown(button);
+                            }
+
+                            if (xi2_version >= 210)
+                            {
+                                // High resolution scroll events supported.
+                                // This code is implemented in XI2Mouse.GetCursorState().
+                                // Instead of reimplementing this functionality, just
+                                // use the values from there.
+                                MouseState state = Mouse.GetCursorState();
+                                dx = state.Scroll.X - MouseState.Scroll.X;
+                                dy = state.Scroll.Y - MouseState.Scroll.Y;
+                            }
+
+                            if (dx != 0 || dy != 0)
+                            {
+                                // High resolution scroll events not supported
+                                // fallback to the old Button4-7 scroll buttons
+                                OnMouseWheel(dx, dy);
+                            }
+                        }
+                        break;
+
                     case XEventName.ButtonRelease:
-                        driver.ProcessEvent(ref e);
+                        {
+                            float dx, dy;
+                            MouseButton button = X11KeyMap.TranslateButton(e.ButtonEvent.button, out dx, out dy);
+                            if (button != MouseButton.LastButton)
+                            {
+                                OnMouseUp(button);
+                            }
+                        }
                         break;
 
                     case XEventName.FocusIn:
@@ -946,7 +948,12 @@ namespace OpenTK.Platform.X11
                             bool previous_focus = has_focus;
                             has_focus = true;
                             if (has_focus != previous_focus)
-                                FocusedChanged(this, EventArgs.Empty);
+                                OnFocusedChanged(EventArgs.Empty);
+
+                            if (Focused && !CursorVisible)
+                            {
+                                GrabMouse();
+                            }
                         }
                         break;
 
@@ -955,19 +962,25 @@ namespace OpenTK.Platform.X11
                             bool previous_focus = has_focus;
                             has_focus = false;
                             if (has_focus != previous_focus)
-                                FocusedChanged(this, EventArgs.Empty);
+                                OnFocusedChanged(EventArgs.Empty);
                         }
                         break;
 
                     case XEventName.LeaveNotify:
                         if (CursorVisible)
                         {
-                            MouseLeave(this, EventArgs.Empty);
+                            int x = MathHelper.Clamp(e.CrossingEvent.x, 0, Width);
+                            int y = MathHelper.Clamp(e.CrossingEvent.y, 0, Height);
+                            if (x != MouseState.X || y != MouseState.Y)
+                            {
+                                OnMouseMove(x, y);
+                            }
+                            OnMouseLeave(EventArgs.Empty);
                         }
                         break;
 
                     case XEventName.EnterNotify:
-                        MouseEnter(this, EventArgs.Empty);
+                        OnMouseEnter(EventArgs.Empty);
                         break;
 
                     case XEventName.MappingNotify:
@@ -976,13 +989,14 @@ namespace OpenTK.Platform.X11
                         {
                             Debug.Print("keybard mapping refreshed");
                             Functions.XRefreshKeyboardMapping(ref e.MappingEvent);
+                            KeyMap.RefreshKeycodes(window.Display);
                         }
                         break;
 
                    case XEventName.PropertyNotify:
                         if (e.PropertyEvent.atom == _atom_net_wm_state)
                         {
-                            WindowStateChanged(this, EventArgs.Empty);
+                            OnWindowStateChanged(EventArgs.Empty);
                         }
 
                         //if (e.PropertyEvent.atom == _atom_net_frame_extents)
@@ -990,7 +1004,7 @@ namespace OpenTK.Platform.X11
                         //    RefreshWindowBorders();
                         //}
                         break;
-                       
+
                     default:
                         //Debug.WriteLine(String.Format("{0} event was not handled", e.type));
                         break;
@@ -1002,7 +1016,7 @@ namespace OpenTK.Platform.X11
 
         #region Bounds
 
-        public Rectangle Bounds
+        public override Rectangle Bounds
         {
             get
             {
@@ -1048,50 +1062,18 @@ namespace OpenTK.Platform.X11
 
         #endregion
 
-        #region Location
+        #region ClientSize
 
-        public Point Location
-        {
-            get { return Bounds.Location; }
-            set
-            {
-                Bounds = new Rectangle(value, Bounds.Size);
-            }
-        }
-
-        #endregion
-
-        #region Size
-
-        public Size Size
-        {
-            get { return Bounds.Size; }
-            set
-            {
-                Bounds = new Rectangle(Bounds.Location, value);
-            }
-        }
-
-        #endregion
-
-        #region ClientRectangle
-
-        public Rectangle ClientRectangle
+        public override Size ClientSize
         {
             get
             {
-                if (client_rectangle.Width == 0)
-                    client_rectangle.Width = 1;
-                if (client_rectangle.Height == 0)
-                    client_rectangle.Height = 1;
-                return client_rectangle;
+                return client_rectangle.Size;
             }
             set
             {
                 using (new XLock(window.Display))
                 {
-                    Functions.XMoveWindow(window.Display, window.Handle,
-                        value.X, value.Y);
                     Functions.XResizeWindow(window.Display, window.Handle,
                         value.Width, value.Height);
                 }
@@ -1101,65 +1083,9 @@ namespace OpenTK.Platform.X11
 
         #endregion
 
-        #region ClientSize
-
-        public Size ClientSize
-        {
-            get
-            {
-                return ClientRectangle.Size;
-            }
-            set
-            {
-                ClientRectangle = new Rectangle(Point.Empty, value);
-            }
-        }
-
-        #endregion
-
-        #region Width
-
-        public int Width
-        {
-            get { return ClientSize.Width; }
-            set { ClientSize = new Size(value, Height); }
-        }
-
-        #endregion
-
-        #region Height
-
-        public int Height
-        {
-            get { return ClientSize.Height; }
-            set { ClientSize = new Size(Width, value); }
-        }
-
-        #endregion
-
-        #region X
-
-        public int X
-        {
-            get { return Location.X; }
-            set { Location = new Point(value, Y); }
-        }
-
-        #endregion
-
-        #region Y
-
-        public int Y
-        {
-            get { return Location.Y; }
-            set { Location = new Point(X, value); }
-        }
-
-        #endregion
-
         #region Icon
 
-        public Icon Icon
+        public override Icon Icon
         {
             get
             {
@@ -1225,7 +1151,7 @@ namespace OpenTK.Platform.X11
                 }
 
                 icon = value;
-                IconChanged(this, EventArgs.Empty);
+                OnIconChanged(EventArgs.Empty);
             }
         }
 
@@ -1233,7 +1159,7 @@ namespace OpenTK.Platform.X11
 
         #region Focused
 
-        public bool Focused
+        public override bool Focused
         {
             get
             {
@@ -1245,7 +1171,7 @@ namespace OpenTK.Platform.X11
 
         #region WindowState
 
-        public OpenTK.WindowState WindowState
+        public override OpenTK.WindowState WindowState
         {
             get
             {
@@ -1306,75 +1232,105 @@ namespace OpenTK.Platform.X11
             {
                 OpenTK.WindowState current_state = this.WindowState;
 
+                // When switching away from normal state, store
+                // the "normal" border and size. These will be used
+                // for restoring to normal state.
+                if (current_state == OpenTK.WindowState.Normal)
+                {
+                    _previous_window_border = WindowBorder;
+                    _previous_window_size = ClientSize;
+                }
+
                 if (current_state == value)
                     return;
 
                 Debug.Print("GameWindow {0} changing WindowState from {1} to {2}.", window.Handle.ToString(),
-                            current_state.ToString(), value.ToString());
+                    current_state.ToString(), value.ToString());
 
-                using (new XLock(window.Display))
+                // When minimizing the window, call XIconifyWindow and bail out.
+                // For other states, we first need to restore the window, set the
+                // new state and reset the window border and bounds.
+                if (value != OpenTK.WindowState.Minimized)
                 {
-                    // Reset the current window state
-                    if (current_state == OpenTK.WindowState.Minimized)
-                        Functions.XMapWindow(window.Display, window.Handle);
-                    else if (current_state == OpenTK.WindowState.Fullscreen)
-                        Functions.SendNetWMMessage(window, _atom_net_wm_state, _atom_remove,
-                                                  _atom_net_wm_state_fullscreen,
-                                                   IntPtr.Zero);
-                    else if (current_state == OpenTK.WindowState.Maximized)
-                        Functions.SendNetWMMessage(window, _atom_net_wm_state, _atom_toggle,
-                                                  _atom_net_wm_state_maximized_horizontal,
-                                                  _atom_net_wm_state_maximized_vertical);
-    
-                    Functions.XSync(window.Display, false);
-                }
-                // We can't resize the window if its border is fixed, so make it resizable first.
-                bool temporary_resizable = false;
-                WindowBorder previous_state = WindowBorder;
-                if (WindowBorder != WindowBorder.Resizable)
-                {
-                    temporary_resizable = true;
-                    WindowBorder = WindowBorder.Resizable;
-                }
-
-                using (new XLock(window.Display))
-                {
-                    switch (value)
+                    // Some WMs cannot switch between specific states directly,
+                    // Switch back to a regular window first.
+                    if (WindowBorder == WindowBorder.Fixed)
                     {
-                        case OpenTK.WindowState.Normal:
-                            Functions.XRaiseWindow(window.Display, window.Handle);
-    
-                            break;
-    
-                        case OpenTK.WindowState.Maximized:
-                            Functions.SendNetWMMessage(window, _atom_net_wm_state, _atom_add,
-                                                      _atom_net_wm_state_maximized_horizontal,
-                                                      _atom_net_wm_state_maximized_vertical);
-                            Functions.XRaiseWindow(window.Display, window.Handle);
-    
-                            break;
-    
+                        ChangeWindowBorder(WindowBorder.Resizable);
+                    }
+
+                    ResetWindowState(current_state);
+                }
+
+                // Change to the desired WindowState.
+                // Note that OnWindowStateChanged is called inside
+                // ProcessEvents.
+                ChangeWindowState(value);
+                ProcessEvents();
+            }
+        }
+
+        void ResetWindowState(OpenTK.WindowState current_state)
+        {
+            if (current_state != OpenTK.WindowState.Normal)
+            {
+                using (new XLock(window.Display))
+                {
+                    switch (current_state)
+                    {
                         case OpenTK.WindowState.Minimized:
-                            // Todo: multiscreen support
-                            Functions.XIconifyWindow(window.Display, window.Handle, window.Screen);
-    
+                            Functions.XMapWindow(window.Display, window.Handle);
                             break;
-    
+
                         case OpenTK.WindowState.Fullscreen:
-                            //_previous_window_border = this.WindowBorder;
-                            //this.WindowBorder = WindowBorder.Hidden;
-                            Functions.SendNetWMMessage(window, _atom_net_wm_state, _atom_add,
-                                                      _atom_net_wm_state_fullscreen, IntPtr.Zero);
-                            Functions.XRaiseWindow(window.Display, window.Handle);
-    
+                            Functions.SendNetWMMessage(window,
+                                _atom_net_wm_state,
+                                _atom_remove,
+                                _atom_net_wm_state_fullscreen,
+                                IntPtr.Zero);
+                            break;
+
+                        case OpenTK.WindowState.Maximized:
+                            Functions.SendNetWMMessage(window,
+                                _atom_net_wm_state,
+                                _atom_toggle,
+                                _atom_net_wm_state_maximized_horizontal,
+                                _atom_net_wm_state_maximized_vertical);
                             break;
                     }
                 }
+            }
+        }
 
-                if (temporary_resizable)
-                    WindowBorder = previous_state;
+        void ChangeWindowState(OpenTK.WindowState value)
+        {
+            using (new XLock(window.Display))
+            {
+                switch (value)
+                {
+                    case OpenTK.WindowState.Normal:
+                        Functions.XRaiseWindow(window.Display, window.Handle);
+                        ChangeWindowBorder(_previous_window_border,
+                            _previous_window_size.Width, _previous_window_size.Height);
+                        break;
 
-                ProcessEvents();
+                    case OpenTK.WindowState.Maximized:
+                        Functions.SendNetWMMessage(window, _atom_net_wm_state, _atom_add,
+                            _atom_net_wm_state_maximized_horizontal,
+                            _atom_net_wm_state_maximized_vertical);
+                        Functions.XRaiseWindow(window.Display, window.Handle);
+                        break;
+
+                    case OpenTK.WindowState.Minimized:
+                        Functions.XIconifyWindow(window.Display, window.Handle, window.Screen);
+                        break;
+
+                    case OpenTK.WindowState.Fullscreen:
+                        Functions.SendNetWMMessage(window, _atom_net_wm_state, _atom_add,
+                            _atom_net_wm_state_fullscreen, IntPtr.Zero);
+                        Functions.XRaiseWindow(window.Display, window.Handle);
+                        break;
+                }
             }
         }
 
@@ -1382,75 +1338,130 @@ namespace OpenTK.Platform.X11
 
         #region WindowBorder
 
-        public OpenTK.WindowBorder WindowBorder
+        public override OpenTK.WindowBorder WindowBorder
         {
             get
             {
-                if (IsWindowBorderHidden)
+                if (IsWindowBorderHidden || WindowState == OpenTK.WindowState.Fullscreen)
                     return WindowBorder.Hidden;
-
-                if (IsWindowBorderResizable)
-                    return WindowBorder.Resizable;
-                else
+                else if (!IsWindowBorderResizable)
                     return WindowBorder.Fixed;
+                else if (WindowState == OpenTK.WindowState.Maximized)
+                    return _previous_window_border;
+                else
+                    return WindowBorder.Resizable;
             }
             set
             {
                 if (WindowBorder == value)
                     return;
 
-                if (WindowBorder == WindowBorder.Hidden)
-                    EnableWindowDecorations();
-
-                switch (value)
+                // We cannot change the border of a fullscreen window.
+                // Record the new value and set it on the next WindowState
+                // change.
+                if (WindowState == OpenTK.WindowState.Fullscreen)
                 {
-                    case WindowBorder.Fixed:
-                        Debug.Print("Making WindowBorder fixed.");
-                        SetWindowMinMax((short)Width, (short)Height, (short)Width, (short)Height);
-
-                        break;
-
-                    case WindowBorder.Resizable:
-                        Debug.Print("Making WindowBorder resizable.");
-                        SetWindowMinMax(_min_width, _min_height, -1, -1);
-
-                        break;
-
-                    case WindowBorder.Hidden:
-                        Debug.Print("Making WindowBorder hidden.");
-                        DisableWindowDecorations();
-
-                        break;
+                    _previous_window_border = value;
+                    return;
                 }
 
-                WindowBorderChanged(this, EventArgs.Empty);
+                ChangeWindowBorder(value);
+                OnWindowBorderChanged(EventArgs.Empty);
+            }
+        }
+
+        void ChangeWindowBorder(WindowBorder value)
+        {
+            ChangeWindowBorder(value, Width, Height);
+        }
+
+        void ChangeWindowBorder(WindowBorder value, int width, int height)
+        {
+            if (WindowBorder == WindowBorder.Hidden)
+                EnableWindowDecorations();
+
+            switch (value)
+            {
+                case WindowBorder.Fixed:
+                    Debug.Print("Making WindowBorder fixed.");
+                    SetWindowMinMax((short)width, (short)height, (short)width, (short)height);
+                    break;
+                case WindowBorder.Resizable:
+                    Debug.Print("Making WindowBorder resizable.");
+                    SetWindowMinMax(_min_width, _min_height, -1, -1);
+                    break;
+                case WindowBorder.Hidden:
+                    Debug.Print("Making WindowBorder hidden.");
+                    // Make the hidden border resizable, otherwise
+                    // we won't be able to maximize the window or
+                    // enter fullscreen mode.
+                    SetWindowMinMax(_min_width, _min_height, -1, -1);
+                    DisableWindowDecorations();
+                    break;
+            }
+
+            ProcessEvents();
+        }
+
+        #endregion
+
+        #region Cursor
+
+        public override MouseCursor Cursor
+        {
+            get
+            {
+                return cursor;
+            }
+            set
+            {
+                unsafe
+                {
+                    if (value == cursor)
+                        return;
+
+                    using (new XLock(window.Display))
+                    {
+                        if (value == MouseCursor.Default)
+                        {
+                            cursorHandle = IntPtr.Zero;
+                        }
+                        else if (value == MouseCursor.Empty)
+                        {
+                            cursorHandle = EmptyCursor;
+                        }
+                        else
+                        {
+                            fixed(byte* pixels = value.Data)
+                            {
+                                var xcursorimage = Functions.XcursorImageCreate(value.Width, value.Height);
+                                xcursorimage->xhot = (uint)value.X;
+                                xcursorimage->yhot = (uint)value.Y;
+                                xcursorimage->pixels = (uint*)pixels;
+                                xcursorimage->delay = 0;
+                                cursorHandle = Functions.XcursorImageLoadCursor(window.Display, xcursorimage);
+                                Functions.XcursorImageDestroy(xcursorimage);
+                            }
+                        }
+
+                        // If the cursor is visible set it now.
+                        // Otherwise, it will be set in CursorVisible = true.
+                        if (CursorVisible)
+                        {
+                            Functions.XDefineCursor(window.Display, window.Handle, cursorHandle);
+                        }
+
+                        cursor = value;
+                    }
+                }
             }
         }
 
         #endregion
 
-        #region Events
+        #region CursorVisible
 
-        public event EventHandler<EventArgs> Move = delegate { };
-        public event EventHandler<EventArgs> Resize = delegate { };
-        public event EventHandler<System.ComponentModel.CancelEventArgs> Closing = delegate { };
-        public event EventHandler<EventArgs> Closed = delegate { };
-        public event EventHandler<EventArgs> Disposed = delegate { };
-        public event EventHandler<EventArgs> IconChanged = delegate { };
-        public event EventHandler<EventArgs> TitleChanged = delegate { };
-        public event EventHandler<EventArgs> VisibleChanged = delegate { };
-        public event EventHandler<EventArgs> FocusedChanged = delegate { };
-        public event EventHandler<EventArgs> WindowBorderChanged = delegate { };
-        public event EventHandler<EventArgs> WindowStateChanged = delegate { };
-        public event EventHandler<KeyboardKeyEventArgs> KeyDown = delegate { };
-        public event EventHandler<KeyPressEventArgs> KeyPress = delegate { };
-        public event EventHandler<KeyboardKeyEventArgs> KeyUp = delegate { };
-        public event EventHandler<EventArgs> MouseEnter = delegate { };
-        public event EventHandler<EventArgs> MouseLeave = delegate { };
-        
-        #endregion
-
-        public bool CursorVisible
+        public override bool CursorVisible
         {
             get { return cursor_visible; }
             set
@@ -1459,7 +1470,14 @@ namespace OpenTK.Platform.X11
                 {
                     using (new XLock(window.Display))
                     {
-                        Functions.XUndefineCursor(window.Display, window.Handle);
+                        UngrabMouse();
+
+                        Point p = PointToScreen(new Point(MouseState.X, MouseState.Y));
+                        Mouse.SetPosition(p.X, p.Y);
+
+                        // Note: if cursorHandle = IntPtr.Zero, this restores the default cursor
+                        // (equivalent to calling XUndefineCursor)
+                        Functions.XDefineCursor(window.Display, window.Handle, cursorHandle);
                         cursor_visible = true;
                     }
                 }
@@ -1467,35 +1485,39 @@ namespace OpenTK.Platform.X11
                 {
                     using (new XLock(window.Display))
                     {
-                        Functions.XDefineCursor(window.Display, window.Handle, EmptyCursor);
+                        GrabMouse();
                         cursor_visible = false;
                     }
                 }
             }
         }
 
+        void GrabMouse()
+        {
+            Functions.XGrabPointer(window.Display, window.Handle, false,
+                EventMask.PointerMotionMask | EventMask.ButtonPressMask |
+                EventMask.ButtonReleaseMask,
+                GrabMode.GrabModeAsync, GrabMode.GrabModeAsync,
+                window.Handle, EmptyCursor, IntPtr.Zero);
+        }
+
+        void UngrabMouse()
+        {
+            Functions.XUngrabPointer(window.Display, IntPtr.Zero);
+        }
+
+        #endregion
+
         #endregion
 
         #region --- INativeGLWindow Members ---
-
-        #region public IInputDriver InputDriver
-
-        public IInputDriver InputDriver
-        {
-            get
-            {
-                return driver;
-            }
-        }
-
-        #endregion 
 
         #region public bool Exists
 
         /// <summary>
         /// Returns true if a render window/context exists.
         /// </summary>
-        public bool Exists
+        public override bool Exists
         {
             get { return exists; }
         }
@@ -1529,7 +1551,7 @@ namespace OpenTK.Platform.X11
         /// TODO: Use atoms for this property.
         /// Gets or sets the GameWindow title.
         /// </summary>
-        public string Title
+        public override string Title
         {
             get
             {
@@ -1553,7 +1575,7 @@ namespace OpenTK.Platform.X11
                     }
                 }
 
-                TitleChanged(this, EventArgs.Empty);
+                OnTitleChanged(EventArgs.Empty);
             }
         }
 
@@ -1561,7 +1583,7 @@ namespace OpenTK.Platform.X11
 
         #region public bool Visible
 
-        public bool Visible
+        public override bool Visible
         {
             get
             {
@@ -1590,19 +1612,21 @@ namespace OpenTK.Platform.X11
 
         #region public IWindowInfo WindowInfo
 
-        public IWindowInfo WindowInfo
+        public override IWindowInfo WindowInfo
         {
             get { return window; }
         }
 
         #endregion
 
-        public void Close() { Exit(); }
+        public override void Close() { Exit(); }
 
         #region public void Exit()
 
         public void Exit()
         {
+            Debug.Print("[X11] Sending exit message window {0:X} on display {1:X}", window.Handle, window.Display);
+
             XEvent ev = new XEvent();
             ev.type = XEventName.ClientMessage;
             ev.ClientMessageEvent.format = 32;
@@ -1623,10 +1647,14 @@ namespace OpenTK.Platform.X11
 
         public void DestroyWindow()
         {
-            Debug.WriteLine("X11GLNative shutdown sequence initiated.");
+            Debug.Print("[X11] Destroying window {0:X} on display {1:X}", window.Handle, window.Display);
+
             using (new XLock(window.Display))
             {
+                Functions.XUnmapWindow(window.Display, window.Handle);
+                Functions.XSync(window.Display, false);
                 Functions.XDestroyWindow(window.Display, window.Handle);
+                exists = false;
             }
         }
 
@@ -1634,7 +1662,7 @@ namespace OpenTK.Platform.X11
 
         #region PointToClient
 
-        public Point PointToClient(Point point)
+        public override Point PointToClient(Point point)
         {
             int ox, oy;
             IntPtr child;
@@ -1654,7 +1682,7 @@ namespace OpenTK.Platform.X11
 
         #region PointToScreen
 
-        public Point PointToScreen(Point point)
+        public override Point PointToScreen(Point point)
         {
             int ox, oy;
             IntPtr child;
@@ -1676,13 +1704,7 @@ namespace OpenTK.Platform.X11
 
         #region IDisposable Members
 
-        public void Dispose()
-        {
-            this.Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        private void Dispose(bool manuallyCalled)
+        protected override void Dispose(bool manuallyCalled)
         {
             if (!disposed)
             {
@@ -1690,20 +1712,18 @@ namespace OpenTK.Platform.X11
                 {
                     if (window != null && window.Handle != IntPtr.Zero)
                     {
+                        Functions.XFreeCursor(window.Display, EmptyCursor);
+                        if(cursorHandle != IntPtr.Zero)
+                        {
+                            Functions.XFreeCursor(window.Display, cursorHandle);
+                        }
+
                         if (Exists)
                         {
-                            using (new XLock(window.Display))
-                            {
-                                Functions.XFreeCursor(window.Display, EmptyCursor);
-                                Functions.XDestroyWindow(window.Display, window.Handle);
-                            }
-
-                            while (Exists)
-                                ProcessEvents();
+                            DestroyWindow();
                         }
 
                         window.Dispose();
-                        window = null;
                     }
                 }
                 else
@@ -1712,11 +1732,6 @@ namespace OpenTK.Platform.X11
                 }
                 disposed = true;
             }
-        }
-
-        ~X11GLNative()
-        {
-            this.Dispose(false);
         }
 
         #endregion

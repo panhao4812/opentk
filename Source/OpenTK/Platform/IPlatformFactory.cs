@@ -44,9 +44,7 @@ namespace OpenTK.Platform
         IGraphicsContext CreateGLContext(ContextHandle handle, IWindowInfo window, IGraphicsContext shareContext, bool directRendering, int major, int minor, GraphicsContextFlags flags);
 
         GraphicsContext.GetCurrentContextDelegate CreateGetCurrentGraphicsContext();
-        
-        IGraphicsMode CreateGraphicsMode();
-        
+
         OpenTK.Input.IKeyboardDriver2 CreateKeyboardDriver();
 
         OpenTK.Input.IMouseDriver2 CreateMouseDriver();
@@ -55,6 +53,9 @@ namespace OpenTK.Platform
 
         Input.IJoystickDriver2 CreateJoystickDriver();
 
+        [Obsolete]
         Input.IJoystickDriver CreateLegacyJoystickDriver();
+
+        void RegisterResource(IDisposable resource);
     }
 }

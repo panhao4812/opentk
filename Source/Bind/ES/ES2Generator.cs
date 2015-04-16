@@ -25,6 +25,8 @@ namespace Bind.ES
             Settings.DefaultDocPath = Path.Combine(
                 Settings.DefaultDocPath, "ES20");
 
+            Settings.OverridesFiles.Add("GL2/overrides.xml");
+
             Profile = "gles2";
             Version = "2.0";
 
@@ -32,7 +34,7 @@ namespace Bind.ES
             // overloads using the "All" enum in addition to strongly-typed enums.
             // This can be disabled by passing "-o:-keep_untyped_enums" as a cmdline parameter.
             Settings.DefaultCompatibility |= Settings.Legacy.KeepUntypedEnums;
-            Settings.DefaultCompatibility |= Settings.Legacy.UseDllImports;
+            //Settings.DefaultCompatibility |= Settings.Legacy.UseDllImports;
         }
     }
 }

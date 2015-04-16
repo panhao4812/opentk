@@ -28,6 +28,7 @@
 #endregion
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using OpenTK.Graphics;
 using OpenTK.Input;
@@ -42,6 +43,9 @@ namespace OpenTK.Platform
     /// </summary>
     abstract class PlatformFactoryBase : IPlatformFactory
     {
+        static readonly object sync = new object();
+        readonly List<IDisposable> Resources = new List<IDisposable>();
+
         protected bool IsDisposed;
 
         public PlatformFactoryBase()
@@ -63,11 +67,6 @@ namespace OpenTK.Platform
 
         public abstract GraphicsContext.GetCurrentContextDelegate CreateGetCurrentGraphicsContext();
 
-        public virtual IGraphicsMode CreateGraphicsMode()
-        {
-            throw new NotSupportedException();
-        }
-
         public abstract IKeyboardDriver2 CreateKeyboardDriver();
 
         public abstract IMouseDriver2 CreateMouseDriver();
@@ -79,9 +78,18 @@ namespace OpenTK.Platform
 
         public abstract IJoystickDriver2 CreateJoystickDriver();
 
+        [Obsolete]
         public virtual IJoystickDriver CreateLegacyJoystickDriver()
         {
             return new LegacyJoystickDriver();
+        }
+
+        public void RegisterResource(IDisposable resource)
+        {
+            lock (sync)
+            {
+                Resources.Add(resource);
+            }
         }
 
         #endregion
@@ -100,10 +108,19 @@ namespace OpenTK.Platform
             {
                 if (manual)
                 {
+                    lock (sync)
+                    {
+                        foreach (var resource in Resources)
+                        {
+                            resource.Dispose();
+                        }
+                        Resources.Clear();
+                    }
                 }
                 else
                 {
-                    Debug.Print("[OpenTK] {0} leaked, did you forget to call Dispose()?", GetType());
+                    Debug.Print("[OpenTK] {0} leaked with {1} live resources, did you forget to call Dispose()?",
+                        GetType().FullName, Resources.Count);
                 }
                 IsDisposed = true;
             }

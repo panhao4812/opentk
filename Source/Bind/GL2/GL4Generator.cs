@@ -1,4 +1,4 @@
-﻿#region License
+#region License
 //
 // The Open Toolkit Library License
 //
@@ -48,7 +48,13 @@ namespace Bind.GL2
             Settings.DefaultDocPath = Path.Combine(
                 Settings.DefaultDocPath, "GL");
 
+            Settings.OverridesFiles.Add("GL2/overrides.xml");
+            Settings.OverridesFiles.Add("GL2/GL/");
+
             Profile = "glcore";
+
+            //Settings.DefaultCompatibility |=
+            //    Settings.Legacy.UseDllImports | Settings.Legacy.UseWindowsCompatibleGL;
         }
     }
 }

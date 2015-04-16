@@ -121,7 +121,7 @@ namespace OpenTK.Graphics
                     Debug.Print("GraphicsContextFlags: {0}", flags);
                     Debug.Print("Requested version: {0}.{1}", major, minor);
 
-                    IGraphicsContext shareContext = shareContext = FindSharedContext();
+                    IGraphicsContext shareContext = FindSharedContext();
                     
                     // Todo: Add a DummyFactory implementing IPlatformFactory.
                     if (designMode)
@@ -150,6 +150,7 @@ namespace OpenTK.Graphics
 
                         implementation = factory.CreateGLContext(mode, window, shareContext, direct_rendering, major, minor, flags);
                         handle_cached = ((IGraphicsContextInternal)implementation).Context;
+                        factory.RegisterResource(this);
                     }
 
                     AddContext(this);
@@ -601,7 +602,10 @@ namespace OpenTK.Graphics
         /// </returns>
         IntPtr IGraphicsContextInternal.GetAddress(string function)
         {
-            return (implementation as IGraphicsContextInternal).GetAddress(function);
+            IntPtr name = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi(function);
+            IntPtr address = (implementation as IGraphicsContextInternal).GetAddress(name);
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(name);
+            return address;
         }
 
         /// <summary>

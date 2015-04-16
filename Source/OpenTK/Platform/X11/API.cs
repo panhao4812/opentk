@@ -38,6 +38,11 @@ namespace OpenTK.Platform.X11
     using Display = System.IntPtr;
     using XPointer = System.IntPtr;
 
+    using XcursorBool = System.Int32;
+    using XcursorUInt = System.UInt32;
+    using XcursorDim = System.UInt32;
+    using XcursorPixel = System.UInt32;
+
     // Randr and Xrandr
     using Bool = System.Boolean;
     using XRRScreenConfiguration = System.IntPtr; // opaque datatype
@@ -111,24 +116,6 @@ namespace OpenTK.Platform.X11
         //extern public static IntPtr CreateColormap(Display display, Window window, IntPtr visual, int alloc);
 
         #region Window handling
-
-        [Obsolete("Use XCreateWindow instead")]
-        [DllImport(_dll_name, EntryPoint = "XCreateWindow")]
-        public extern static Window CreateWindow(
-            Display display,
-            Window parent,
-            int x, int y,
-            //uint width, uint height,
-            int width, int height,
-            //uint border_width,
-            int border_width,
-            int depth,
-            //uint @class,
-            int @class,
-            IntPtr visual,
-            [MarshalAs(UnmanagedType.SysUInt)] CreateWindowMask valuemask,
-            SetWindowAttributes attributes
-        );
 
         [DllImport(_dll_name, EntryPoint = "XCreateSimpleWindow")]
         public extern static Window CreateSimpleWindow(
@@ -578,6 +565,47 @@ XF86VidModeGetGammaRampSize(
     #endregion
 
     #region X11 Structures
+
+    #region Xcursor
+
+    [StructLayout(LayoutKind.Sequential)]
+    unsafe struct XcursorImage
+    {
+        public XcursorUInt version;
+        public XcursorDim size;
+        public XcursorDim width;
+        public XcursorDim height;
+        public XcursorDim xhot;
+        public XcursorDim yhot;
+        public XcursorUInt delay;
+        public XcursorPixel* pixels;
+    }
+    
+    [StructLayout(LayoutKind.Sequential)]
+    unsafe struct XcursorImages 
+    {
+        public int nimage;
+        public XcursorImage **images;
+        public char *name;
+    }
+    
+    [StructLayout(LayoutKind.Sequential)]
+    unsafe struct XcursorCursors 
+    {
+        public Display dpy;
+        public int refcount;
+        public int ncursor;
+        public Cursor *cursors;
+    }
+    
+    [StructLayout(LayoutKind.Sequential)]
+    unsafe struct XcursorAnimate 
+    {
+        public XcursorCursors *cursors;
+        public int sequence;
+    }
+
+    #endregion
 
     #region internal class XVisualInfo
 
@@ -1388,6 +1416,7 @@ XF86VidModeGetGammaRampSize(
     internal static partial class Functions
     {
         internal const string X11Library = "libX11";
+        internal const string XcursorLibrary = "libXcursor.so.1";
 
         #region XCreateWindow
 
@@ -1415,10 +1444,26 @@ XF86VidModeGetGammaRampSize(
         /// <para>The XCreateSimpleWindow function creates an unmapped InputOutput subwindow for a specified parent window, returns the window ID of the created window, and causes the X server to generate a CreateNotify event. The created window is placed on top in the stacking order with respect to siblings. Any part of the window that extends outside its parent window is clipped. The border_width for an InputOnly window must be zero, or a BadMatch error results. XCreateSimpleWindow inherits its depth, class, and visual from its parent. All other window attributes, except background and border, have their default values. </para>
         /// <para>XCreateSimpleWindow can generate BadAlloc, BadMatch, BadValue, and BadWindow errors.</para>
         /// </remarks>
-        [DllImport(X11Library, EntryPoint = "XCreateWindow")]//, CLSCompliant(false)]
-        public extern static Window XCreateWindow(Display display, Window parent,
+        public static Window XCreateWindow(Display display, Window parent,
             int x, int y, int width, int height, int border_width, int depth,
-            int @class, IntPtr visual, UIntPtr valuemask, ref XSetWindowAttributes attributes);
+            CreateWindowArgs @class, IntPtr visual, SetWindowValuemask valuemask,
+            XSetWindowAttributes? attributes)
+        {
+            unsafe
+            {
+                if (attributes.HasValue)
+                {
+                    XSetWindowAttributes attr = attributes.Value;
+                    return XCreateWindow(display, parent, x, y, width, height, border_width, depth,
+                        (int)@class, visual, (IntPtr)valuemask, &attr);
+                }
+                else
+                {
+                    return XCreateWindow(display, parent, x, y, width, height, border_width, depth,
+                        (int)@class, visual, (IntPtr)valuemask, null);
+                }
+            }
+        }
 
         #endregion
 
@@ -1431,6 +1476,19 @@ XF86VidModeGetGammaRampSize(
         {
             XChangeWindowAttributes(display, w, (UIntPtr)valuemask, ref attributes);
         }
+
+        #endregion
+
+        #region Xcursor
+
+        [DllImport(XcursorLibrary)]
+        internal static unsafe extern XcursorImage* XcursorImageCreate(int width, int height);
+
+        [DllImport(XcursorLibrary)]
+        internal static unsafe extern void XcursorImageDestroy(XcursorImage* image);
+
+        [DllImport(XcursorLibrary)]
+        internal static unsafe extern Cursor XcursorImageLoadCursor(Display dpy, XcursorImage* image); 
 
         #endregion
 

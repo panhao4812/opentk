@@ -146,6 +146,7 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="OpenGL\1.x\TextRendering.cs" />
+    <Compile Include="OpenTK\GameWindow\MouseCursorSimple.cs" />
     <Compile Include="OpenTK\Test\TestShaderUtf8Support.cs" />
     <Compile Include="SamplesTreeViewSorter.cs">
       <SubType>Code</SubType>
@@ -378,9 +379,6 @@
     <Compile Include="OpenTK\Test\TestGraphicsModes.cs">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="OpenTK\Test\InputLogger.cs">
-      <SubType>Form</SubType>
-    </Compile>
     <EmbeddedResource Include="OpenGL\1.x\ImmediateMode.rtf">
     </EmbeddedResource>
     <EmbeddedResource Include="OpenGL\1.x\VBODynamic.rtf">
@@ -475,12 +473,6 @@
     <Compile Include="OpenTK\Test\Extensions.Designer.cs">
       <DependentUpon>Extensions.cs</DependentUpon>
     </Compile>
-    <EmbeddedResource Include="OpenTK\Test\InputLogger.resx">
-      <DependentUpon>InputLogger.cs</DependentUpon>
-    </EmbeddedResource>
-    <Compile Include="OpenTK\Test\InputLogger.Designer.cs">
-      <DependentUpon>InputLogger.cs</DependentUpon>
-    </Compile>
     <None Include="..\..\OpenTK.snk">
       <Link>OpenTK.snk</Link>
     </None>
@@ -548,9 +540,13 @@
     <None Include="Data\Audio\the_ring_that_fell.wav">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include="Data\Textures\cursor.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <EmbeddedResource Include="OpenGL\1.x\OpenGLDiagnostics.rtf" />
     <EmbeddedResource Include="OpenGL\1.x\Anaglyph.rtf" />
     <EmbeddedResource Include="OpenGL\1.x\TextRendering.rtf" />
+    <EmbeddedResource Include="OpenTK\GameWindow\MouseCursorSimple.rtf" />
     <None Include="Resources\App.ico">
     </None>
     <None Include="..\OpenTK\OpenTK.dll.config">
@@ -567,6 +563,7 @@
       <Link>Dependencies\x64\libSDL2.dylib</Link>
     </None>
     <Compile Include="OpenTK\Test\ExternalContext.cs" />
+    <Compile Include="OpenTK\Test\PointToClient.cs" />
   </ItemGroup>
   <ItemGroup>
     <BootstrapperPackage Include="Microsoft.Net.Client.3.5">

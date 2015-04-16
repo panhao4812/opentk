@@ -38,13 +38,10 @@ namespace OpenTK.Input
     {
         #region Fields
 
-        // Allocate enough ints to store all mouse buttons
-        const int IntSize = sizeof(int);
-        const int NumInts = ((int)MouseButton.LastButton + IntSize - 1) / IntSize;
-        // The following line triggers bogus CS0214 in gmcs 2.0.1, sigh...
-        unsafe fixed int Buttons[NumInts];
-        int x, y;
-        float wheel;
+        internal const int MaxButtons = 16; // we are storing in an ushort
+        Vector2 position;
+        MouseScroll scroll;
+        ushort buttons;
         bool is_connected;
 
         #endregion
@@ -93,7 +90,7 @@ namespace OpenTK.Input
         /// </summary>
         public int Wheel
         {
-            get { return (int)Math.Round(wheel, MidpointRounding.AwayFromZero); }
+            get { return (int)Math.Round(scroll.Y, MidpointRounding.AwayFromZero); }
         }
 
         /// <summary>
@@ -101,11 +98,16 @@ namespace OpenTK.Input
         /// </summary>
         public float WheelPrecise
         {
-            get { return wheel; }
-            internal set
-            {
-                wheel = value;
-            }
+            get { return scroll.Y; }
+        }
+
+        /// <summary>
+        /// Gets a <see cref="OpenTK.Input.MouseScroll"/> instance,
+        /// representing the current state of the mouse scroll wheel.
+        /// </summary>
+        public MouseScroll Scroll
+        {
+            get { return scroll; }
         }
 
         /// <summary>
@@ -113,8 +115,8 @@ namespace OpenTK.Input
         /// </summary>
         public int X
         {
-            get { return x; }
-            internal set { x = value; }
+            get { return (int)Math.Round(position.X); }
+            internal set { position.X = value; }
         }
 
         /// <summary>
@@ -122,8 +124,8 @@ namespace OpenTK.Input
         /// </summary>
         public int Y
         {
-            get { return y; }
-            internal set { y = value; }
+            get { return (int)Math.Round(position.Y); }
+            internal set { position.Y = value; }
         }
 
         /// <summary>
@@ -253,80 +255,55 @@ namespace OpenTK.Input
         /// </returns>
         public override int GetHashCode()
         {
-            unsafe
-            {
-                fixed (int* b = Buttons)
-                {
-                    return b->GetHashCode() ^ X.GetHashCode() ^ Y.GetHashCode() ^ WheelPrecise.GetHashCode();
-                }
-            }
+            return buttons.GetHashCode() ^ X.GetHashCode() ^ Y.GetHashCode() ^ scroll.GetHashCode();
+        }
+
+        /// <summary>
+        /// Returns a <see cref="System.String"/> that represents the current <see cref="OpenTK.Input.MouseState"/>.
+        /// </summary>
+        /// <returns>A <see cref="System.String"/> that represents the current <see cref="OpenTK.Input.MouseState"/>.</returns>
+        public override string ToString()
+        {
+            string b = Convert.ToString(buttons, 2).PadLeft(10, '0');
+            return String.Format("[X={0}, Y={1}, Scroll={2}, Buttons={3}, IsConnected={4}]",
+                X, Y, Scroll, b, IsConnected);
         }
 
         #endregion
 
         #region Internal Members
 
+        internal Vector2 Position
+        {
+            get { return position; }
+            set { position = value; }
+        }
+
         internal bool ReadBit(int offset)
         {
             ValidateOffset(offset);
-
-            int int_offset = offset / 32;
-            int bit_offset = offset % 32;
-            unsafe
-            {
-                fixed (int* b = Buttons)
-                {
-                    return (*(b + int_offset) & (1 << bit_offset)) != 0u;
-                }
-            }
+            return (buttons & (1 << offset)) != 0;
         }
 
         internal void EnableBit(int offset)
         {
             ValidateOffset(offset);
-
-            int int_offset = offset / 32;
-            int bit_offset = offset % 32;
-            unsafe
-            {
-                fixed (int* b = Buttons)
-                {
-                    *(b + int_offset) |= 1 << bit_offset;
-                }
-            }
+            buttons |= unchecked((ushort)(1 << offset));
         }
 
         internal void DisableBit(int offset)
         {
             ValidateOffset(offset);
-
-            int int_offset = offset / 32;
-            int bit_offset = offset % 32;
-            unsafe
-            {
-                fixed (int* b = Buttons)
-                {
-                    *(b + int_offset) &= ~(1 << bit_offset);
-                }
-            }
+            buttons &= unchecked((ushort)(~(1 << offset)));
         }
 
         internal void MergeBits(MouseState other)
         {
-            unsafe
-            {
-                int* b2 = other.Buttons;
-                fixed (int* b1 = Buttons)
-                {
-                    for (int i = 0; i < NumInts; i++)
-                        *(b1 + i) |= *(b2 + i);
-                }
-
-                WheelPrecise += other.WheelPrecise;
-                X += other.X;
-                Y += other.Y;
-                IsConnected |= other.IsConnected;
-            }
+            buttons |= other.buttons;
+            SetScrollRelative(other.scroll.X, other.scroll.Y);
+            X += other.X;
+            Y += other.Y;
+            IsConnected |= other.IsConnected;
         }
 
         internal void SetIsConnected(bool value)
@@ -334,13 +311,29 @@ namespace OpenTK.Input
             IsConnected = value;
         }
 
+        #region Internal Members
+
+        internal void SetScrollAbsolute(float x, float y)
+        {
+            scroll.X = x;
+            scroll.Y = y;
+        }
+
+        internal void SetScrollRelative(float x, float y)
+        {
+            scroll.X += x;
+            scroll.Y += y;
+        }
+
+        #endregion
+
         #endregion
 
         #region Private Members
 
         static void ValidateOffset(int offset)
         {
-            if (offset < 0 || offset >= NumInts * IntSize)
+            if (offset < 0 || offset >= 16)
                 throw new ArgumentOutOfRangeException("offset");
         }
 
@@ -355,18 +348,11 @@ namespace OpenTK.Input
         /// <returns>True, if both instances are equal; false otherwise.</returns>
         public bool Equals(MouseState other)
         {
-            bool equal = true;
-            unsafe
-            {
-                int* b2 = other.Buttons;
-                fixed (int* b1 = Buttons)
-                {
-                    for (int i = 0; equal && i < NumInts; i++)
-                        equal &= *(b1 + i) == *(b2 + i);
-                }
-                equal &= X == other.X && Y == other.Y && WheelPrecise == other.WheelPrecise;
-            }
-            return equal;
+            return
+                buttons == other.buttons &&
+                X == other.X &&
+                Y == other.Y &&
+                Scroll == other.Scroll;
         }
 
         #endregion

@@ -18,6 +18,16 @@ using OpenTK.Graphics;
 
 namespace OpenTK.Platform
 {
+    namespace MacOS
+    {
+        /// <summary>
+        /// This delegate represents any method that takes no arguments and returns an int.
+        /// I would have used Func but that requires .NET 4
+        /// </summary>
+        /// <returns>The int value that your method returns</returns>
+        public delegate int GetInt();
+    }
+
     /// <summary>
     /// Provides cross-platform utilities to help interact with the underlying platform.
     /// </summary>
@@ -238,11 +248,7 @@ namespace OpenTK.Platform
             window.Screen = screen;
             window.Handle = windowHandle;
             window.RootWindow = rootWindow;
-            if (visualInfo != IntPtr.Zero)
-            {
-                window.VisualInfo = (X11.XVisualInfo)Marshal.PtrToStructure(visualInfo, typeof(X11.XVisualInfo));
-            }
-
+            window.Visual = visualInfo;
             return window;
         }
 
@@ -289,6 +295,32 @@ namespace OpenTK.Platform
             OpenTK.Platform.MacOS.GetInt xOffset, OpenTK.Platform.MacOS.GetInt yOffset)
         {
             return new OpenTK.Platform.MacOS.CarbonWindowInfo(windowHandle, false, isControl, xOffset, yOffset);
+        }
+
+        #endregion
+
+        #region CreateMacOSWindowInfo
+
+        /// <summary>
+        /// Creates an IWindowInfo instance for the Mac OS X platform.
+        /// </summary>
+        /// <param name="windowHandle">The handle of the NSWindow.</param>
+        /// <remarks>Assumes that the NSWindow's contentView is the NSView we want to attach to our context.</remarks>
+        /// <returns>A new IWindowInfo instance.</returns>
+        public static IWindowInfo CreateMacOSWindowInfo(IntPtr windowHandle)
+        {
+            return new OpenTK.Platform.MacOS.CocoaWindowInfo(windowHandle);
+        }
+
+        /// <summary>
+        /// Creates an IWindowInfo instance for the Mac OS X platform.
+        /// </summary>
+        /// <param name="windowHandle">The handle of the NSWindow.</param>
+        /// <param name="viewHandle">The handle of the NSView.</param>
+        /// <returns>A new IWindowInfo instance.</returns>
+        public static IWindowInfo CreateMacOSWindowInfo(IntPtr windowHandle, IntPtr viewHandle)
+        {
+            return new OpenTK.Platform.MacOS.CocoaWindowInfo(windowHandle, viewHandle);
         }
 
         #endregion
